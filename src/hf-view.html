@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <title>Clean PC</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 14px/1.4 Segoe UI, sans-serif; }
+    #bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #1c1c1c; border-bottom: 1px solid #333; }
+    #bar button, #bar label { background: #2a2a2a; color: #eee; border: 1px solid #444; padding: 4px 8px; cursor: pointer; }
+    #status { opacity: 0.8; }
+    #stage { position: relative; overflow: auto; height: calc(100% - 42px); }
+    #shot { display: block; max-width: 100%; cursor: crosshair; }
+    #hint { padding: 8px 12px; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <button id="live">Live</button>
+    <button id="once">Скрин</button>
+    <label><input type="checkbox" id="keys" checked /> клавиатура</label>
+    <span id="status">...</span>
+  </div>
+  <div id="stage">
+    <img id="shot" alt="desktop" />
+    <div id="hint">Клик по картинке = клик на чистой. Колесо = скролл. Фокус окна = клавиши.</div>
+  </div>
+  <script>
+    const shot = document.getElementById("shot");
+    const status = document.getElementById("status");
+    let geom = { left: 0, top: 0, width: 1, height: 1 };
+    let live = true;
+    let busy = false;
+    let urlObj = null;
+
+    async function ask(type, body, timeout) {
+      const res = await fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Timeout": String(timeout || 20000) },
+        body: JSON.stringify({ id: Math.random().toString(16).slice(2, 10), type, body: body || {} }),
+      });
+      return res.json();
+    }
+
+    function mapEvent(ev) {
+      const r = shot.getBoundingClientRect();
+      const px = (ev.clientX - r.left) / r.width;
+      const py = (ev.clientY - r.top) / r.height;
+      return {
+        x: geom.left + px * geom.width,
+        y: geom.top + py * geom.height,
+      };
+    }
+
+    async function refresh() {
+      if (busy) return;
+      busy = true;
+      const t0 = performance.now();
+      try {
+        const st = await fetch("/status").then((r) => r.json());
+        if (!st.rtc) {
+          status.textContent = "rtc down";
+          return;
+        }
+        const res = await fetch("/shot?maxw=1280&q=32&t=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) {
+          status.textContent = "shot " + res.status;
+          return;
+        }
+        const g = (res.headers.get("X-Geom") || "0,0,0,0").split(",");
+        geom.left = Number(g[0]) || 0;
+        geom.top = Number(g[1]) || 0;
+        geom.width = Number(g[2]) || 1;
+        geom.height = Number(g[3]) || 1;
+        const blob = await res.blob();
+        if (urlObj) URL.revokeObjectURL(urlObj);
+        urlObj = URL.createObjectURL(blob);
+        shot.src = urlObj;
+        const ms = Math.round(performance.now() - t0);
+        status.textContent = "rtc up " + ms + " ms " + (res.headers.get("X-Bytes") || blob.size) + " b";
+      } catch (e) {
+        status.textContent = String(e.message || e);
+      } finally {
+        busy = false;
+      }
+    }
+
+    document.getElementById("once").onclick = () => refresh();
+    document.getElementById("live").textContent = "Live on";
+    document.getElementById("live").onclick = () => {
+      live = !live;
+      document.getElementById("live").textContent = live ? "Live on" : "Live";
+      if (live) tick();
+    };
+
+    async function tick() {
+      if (!live) return;
+      await refresh();
+      setTimeout(tick, live ? 50 : 900);
+    }
+
+    shot.addEventListener("mousedown", async (ev) => {
+      ev.preventDefault();
+      const p = mapEvent(ev);
+      const op = ev.button === 2 ? "rightclick" : ev.button === 1 ? "middleclick" : ev.detail > 1 ? "dblclick" : "click";
+      await ask("mouse", { op, x: p.x, y: p.y }, 8000);
+    });
+    shot.addEventListener("contextmenu", (ev) => ev.preventDefault());
+    shot.addEventListener("wheel", async (ev) => {
+      ev.preventDefault();
+      const p = mapEvent(ev);
+      await ask("mouse", { op: "scroll", x: p.x, y: p.y, dy: ev.deltaY > 0 ? -120 : 120, dx: ev.deltaX ? (ev.deltaX > 0 ? 120 : -120) : 0 }, 8000);
+    }, { passive: false });
+
+    window.addEventListener("keydown", async (ev) => {
+      if (!document.getElementById("keys").checked) return;
+      if (ev.target && ev.target.tagName === "INPUT") return;
+      ev.preventDefault();
+      const keys = [];
+      if (ev.ctrlKey) keys.push("ctrl");
+      if (ev.altKey) keys.push("alt");
+      if (ev.shiftKey && ev.key.length > 1) keys.push("shift");
+      const map = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down", Escape: "esc", Enter: "enter", Tab: "tab", Backspace: "backspace", Delete: "delete", Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown", " ": "space" };
+      if (map[ev.key]) keys.push(map[ev.key]);
+      else if (ev.key.length === 1 && (ev.ctrlKey || ev.altKey)) keys.push(ev.key);
+      else if (ev.key.length === 1) {
+        await ask("type", { text: ev.key }, 8000);
+        return;
+      } else if (/^F\d+$/i.test(ev.key)) keys.push(ev.key.toLowerCase());
+      if (keys.length) await ask("key", { keys }, 8000);
+    });
+
+    tick();
+  </script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+{
+  "name": "hf-pipe",
+  "version": "1.1.0",
+  "summary": "Dirty-to-clean remote Cursor: Matrix to-device signaling, WebRTC TURN/TCP RPC, filesystem, screenshot, mouse, keyboard, watchdog.",
+  "event_type": "org.hf.pipe",
+  "rpc": {
+    "bind": "127.0.0.1",
+    "port": 18765,
+    "viewer": "http://127.0.0.1:18765/"
+  },
+  "paths": {
+    "dirty_runtime": "C:\\Users\\Malykh_Kirill\\.cursor\\matrix-mcp-e2ee",
+    "clean_runtime": "%USERPROFILE%\\.cursor\\matrix-mcp-e2ee",
+    "dirty_client": "C:\\Users\\Malykh_Kirill\\bin\\hotfolder\\dirty.py",
+    "session": "%USERPROFILE%\\.cursor\\secrets\\matrix-session.json",
+    "shots": "C:\\Users\\Malykh_Kirill\\bin\\hotfolder\\local\\shots"
+  },
+  "jobs": [
+    "ping",
+    "shell",
+    "list",
+    "tree",
+    "glob",
+    "grep",
+    "read",
+    "write",
+    "screenshot",
+    "mouse",
+    "key",
+    "type"
+  ],
+  "mcp": {
+    "server": "clean-pc",
+    "tools": [
+      "clean_status",
+      "clean_shell",
+      "clean_list",
+      "clean_tree",
+      "clean_read",
+      "clean_write",
+      "clean_glob",
+      "clean_grep",
+      "clean_screenshot",
+      "clean_mouse",
+      "clean_key",
+      "clean_type"
+    ]
+  },
+  "watchdog": {
+    "clean_tasks": ["CursorMCP"],
+    "dirty_tasks": ["CursorMCP"],
+    "startup_shortcuts": [],
+    "sync_dead_ms": 120000
+  },
+  "do_not": [
+    "direct TCP dirty<->clean",
+    "v2Ray TUN / system proxy changes",
+    "VPS :443 / x-ui",
+    "DFS transport",
+    "Matrix room as control plane"
+  ]
+}

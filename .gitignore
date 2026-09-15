@@ -1,0 +1,17 @@
+node_modules/
+*.pid
+*.png
+*.jpg
+local/
+secrets/
+matrix-session.json
+.env
+.env.*
+!.env.example
+node.exe
+.data/
+.mcp_cache/
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+npm-debug.log*
