@@ -2,9 +2,12 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import os from "os";
 
+const DEFAULT_PROJECT = "C:\\Users\\Kirill\\Desktop\\projects\\SA";
+const DEFAULT_LAB = "C:\\Users\\Kirill\\Desktop\\projects\\cursor_skills_rules\\lab\\lab.py";
+
 export function resolveCleanLayout(env = process.env) {
-  const project = String(env.HF_CLEAN_PROJECT || "").trim();
-  const lab = String(env.HF_LAB_SCRIPT || "").trim();
+  const project = String(env.HF_CLEAN_PROJECT || DEFAULT_PROJECT).trim();
+  const lab = String(env.HF_LAB_SCRIPT || DEFAULT_LAB).trim();
   const labConfig =
     String(env.HF_LAB_CONFIG || "").trim() || (lab ? join(dirname(lab), "config.yaml") : "");
   return { project, lab, labConfig };

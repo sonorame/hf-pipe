@@ -1,9 +1,14 @@
-# Changelog
+# История изменений
 
 ## 1.3.0
 
-Removed the operator live viewer (`GET /`, `GET /view`, `GET /shot`) and remote mouse/keyboard (`mouse`, `key`, `type`, `input.ps1`, MCP `clean_mouse` / `clean_key` / `clean_type`).
+- Удален интерактивный веб-просмотр экрана через браузер (`GET /`, `GET /view`, `GET /shot`) и управление мышью/клавиатурой (`mouse`, `key`, `type`, `input.ps1`, MCP-инструменты `clean_mouse`, `clean_key`, `clean_type`).
+- Хоп ориентирован на надежный CLI-доступ и снятие статических снимков экрана: `POST /ask`, `GET /status`, операции с файловой системой, shell и `clean_screenshot`.
+- Исходный код с веб-просмотром сохранен в теге `working-baseline-2026-09-15`.
 
-The hop is CLI plus screenshot: `POST /ask`, `GET /status`, filesystem, shell, `clean_screenshot`. The operator already has the remote desktop in person. A browser remote-desktop page was unused.
+## 1.2.0
 
-Rollback of the old page: tag `working-baseline-2026-09-15`.
+- Кроссплатформенная сборка: поддержка работы в Docker, запуск на Linux, macOS и Windows.
+- Универсальная конфигурация через `.env` без привязки к путям конкретного стенда.
+- Добавлена очистка устаревших временных файлов очереди (`temp-sweep.mjs` и `hotfolder-temp.mjs`).
+- Поддержка CI-пайплайна на GitHub Actions.

@@ -1,90 +1,100 @@
 # hf-pipe
 
-**Remote shell, files and screenshot when the two hosts cannot open TCP to each other.**
+**Удаленный shell, файлы и screenshot между хостами, когда прямое TCP-соединение между ними невозможно.**
 
-Signaling goes through Matrix to-device. Payload goes through a WebRTC datachannel over TURN/TCP. Chat rooms are not a control plane.
+Сигналинг работает через Matrix to-device. Передача данных идет через WebRTC datachannel поверх TURN/TCP. Комнаты чата в качестве транспорта не используются.
 
-[Quick start](#quick-start) · [Native](#native) · [Docker](#docker) · [What to click](#what-to-click-next) · [Architecture](docs/architecture.md) · [Configuration](docs/configuration.md)
+[Быстрый старт](#быстрый-старт) · [Запуск без Docker](#запуск-без-docker) · [Запуск в Docker](#запуск-в-docker) · [Куда нажимать и что делать](#куда-нажимать-и-что-делать-дальше) · [Архитектура](docs/architecture.md) · [Параметры окружения](docs/configuration.md)
 
 ![CI](https://github.com/sonorame/hf-pipe/actions/workflows/ci.yml/badge.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-## Why
+## Для чего нужен инструмент
 
-Two machines sit on networks that do not route to each other. You still need to run commands, read files and see a screenshot of the remote session. hf-pipe uses a Matrix homeserver that both sides can reach, then a TURN relay that both sides can reach. After that the operator talks to `127.0.0.1` only.
+Две машины находятся в изолированных сетях, между которыми нет маршрутизации и невозможно открыть прямой сетевой порт. При этом с одной машины требуется выполнять команды на другой, просматривать файлы и снимать screenshot удаленного рабочего стола.
 
-| Side | Role |
-|---|---|
-| **dirty** | Operator. Cursor, MCP, local RPC |
-| **clean** | Remote host. Filesystem, shell, screenshot |
+hf-pipe решает это без VPN и проброса портов:
+1. Обе стороны подключаются к общему Matrix-серверу (сигналинг).
+2. Обе стороны поднимают WebRTC datachannel через TURN-сервер с TCP/TLS.
+3. Оператор на локальной машине обращается только к локальному адресу `127.0.0.1:18765` или использует инструменты MCP в Cursor.
 
-Names are roles, not hostnames. Dirty is whoever runs Cursor. Clean is whoever executes jobs.
+| Сторона | Роль | Описание |
+|---|---|---|
+| **dirty** | Оператор | Машина, где запущен Cursor, MCP-сервер или скрипт управления. Локальный RPC-сервер на 127.0.0.1 |
+| **clean** | Удаленный хост | Машина, на которой выполняются команды, читаются файлы и делается screenshot |
 
-## What it does
+Названия сторон - это роли процессов в туннеле. Операторская сторона инициирует запросы, удаленная сторона выполняет задачи.
 
-- shell, list / tree / glob / grep, read / write
-- screenshot of the remote desktop
-- optional helper script on the remote host (`HF_LAB_SCRIPT`)
-- MCP tools for Cursor (`clean_*`)
-- restart loop + optional OS watchdog if Matrix `/sync` dies
+## Что умеет
+
+- Команды shell с таймаутом и выбором рабочего каталога.
+- Файловые операции: `list`, `tree`, `glob`, `grep`, чтение (`read`) и запись (`write`).
+- Снимок удаленного экрана (`screenshot`).
+- Подключение к Cursor через встроенный MCP-сервер (`clean_*`).
+- Запуск вспомогательных скриптов на удаленном хосте (`clean_lab`).
+- Автоматический перезапуск процесса и контроль зависания Matrix sync.
 
 ```text
-Cursor / CLI
+Cursor / консоль
         |  localhost HTTP 18765
-   dirty hop
-        |  Matrix to-device  (SDP / ICE only)
-        |  WebRTC datachannel via TURN/TCP  (RPC)
-   clean hop
-        |  fs, shell, screenshot
-   remote host
+   хоп dirty (оператор)
+        |  Matrix to-device  (только обмен SDP / ICE)
+        |  WebRTC datachannel через TURN/TCP  (бинарный RPC)
+   хоп clean (удаленный хост)
+        |  файловая система, shell, screenshot
+   удаленная ОС
 ```
 
-## Requirements
+## Требования
 
 - Node.js 20.3+
-- Python 3 (optional CLI `src/dirty.py`)
-- A Matrix homeserver both hosts can reach
-- TURN with TCP or TLS, advertised by `GET /_matrix/client/v3/voip/turnServer`
-- Two device sessions of the **same** Matrix user
+- Python 3 (для вызова CLI через `src/dirty.py`)
+- Доступный обеим машинам сервер Matrix (Synapse + MAS/OIDC или любой homeserver, выдающий access token)
+- TURN-сервер с поддержкой TCP или TLS (выдается через `GET /_matrix/client/v3/voip/turnServer`)
+- Две сессии одного и того же пользователя Matrix
 
-| Job | Windows | macOS | Linux | Docker |
+| Возможность | Windows | macOS | Linux | Docker |
 |---|---|---|---|---|
-| hop daemon, RPC, files, shell | yes | yes | yes | yes |
-| screenshot | PowerShell host process | not yet | not yet | not in the container |
+| Демон хопа, RPC, файлы, shell | Да | Да | Да | Да |
+| Снятие screenshot | Да (через PowerShell) | В разработке | В разработке | Не внутри контейнера |
 
-Screenshot on the remote side currently calls `capture-loop.ps1`. Run the **clean** hop on the Windows session you want to capture. Files and shell work on any OS.
+Снятие screenshot на удаленной стороне использует PowerShell-скрипт `capture-loop.ps1`. Поэтому удаленный хоп (`clean`) для снятия экрана запускается в интерактивной пользовательской сессии Windows. Работа с файлами и shell поддерживается на любой операционной системе.
 
-## Quick start
+## Быстрый старт
 
 ```bash
 git clone https://github.com/sonorame/hf-pipe.git
 cd hf-pipe
 cp .env.example .env
-# edit MATRIX_HOMESERVER_URL and HF_SIDE
+# укажите адрес MATRIX_HOMESERVER_URL и роль HF_SIDE
 npm install
 npm run login
 ```
 
-Browser opens. Confirm the device. Then:
+В браузере откроется страница подтверждения. Войдите под общим пользователем.
 
-**Remote host**
+Затем запустите процессы:
+
+**На удаленной машине (clean):**
 
 ```bash
-# .env: HF_SIDE=clean  and  HF_DEVICE_NAME=hf-matrix
+# в .env: HF_SIDE=clean и HF_DEVICE_NAME=hf-matrix
 npm start -- clean
 ```
 
-**Operator**
+**На машине оператора (dirty):**
 
 ```bash
-# .env: HF_SIDE=dirty  and  HF_DEVICE_NAME=hf-dirty
+# в .env: HF_SIDE=dirty и HF_DEVICE_NAME=hf-dirty
 npm start -- dirty
 ```
 
-Check `http://127.0.0.1:18765/status`. When `"rtc": true`, the tunnel is up.
+Проверьте статус в браузере или через curl:
 
-CLI:
+`http://127.0.0.1:18765/status` -> поле `"rtc": true` означает, что туннель поднят.
+
+Проверка через консоль оператора:
 
 ```bash
 python src/dirty.py ask hostname
@@ -92,7 +102,7 @@ python src/dirty.py ask shell whoami
 python src/dirty.py ask screenshot
 ```
 
-## Native
+## Запуск без Docker
 
 Windows:
 
@@ -101,14 +111,14 @@ scripts\start.cmd clean
 scripts\start.cmd dirty
 ```
 
-or keep the windowed loops:
+или через cmd-скрипты с циклом перезапуска:
 
 ```bat
 src\start-clean.cmd
 src\start-dirty.cmd
 ```
 
-Unix:
+Linux / macOS:
 
 ```bash
 chmod +x scripts/start.sh
@@ -116,71 +126,73 @@ chmod +x scripts/start.sh
 ./scripts/start.sh dirty
 ```
 
-`scripts/run.mjs` restarts the process 4 seconds after exit. That is the watchdog for Node. Optional OS scheduler: `src/install-watchdog.cmd` (Windows Task Scheduler, interactive user, not SYSTEM).
+Скрипт `scripts/run.mjs` следит за процессом: при завершении ожидает 4 секунды и перезапускает Node. В Windows для автозапуска при входе в систему предусмотрен скрипт `src/install-watchdog.cmd` (создает задачу планировщика Windows от имени текущего интерактивного пользователя).
 
-## Docker
+## Запуск в Docker
 
-Same image on both hosts. Secrets live in a volume, not in the image.
+Один и тот же образ работает на обеих сторонах. Файлы сессии и кэш сохраняются в volume, а не в слои контейнера.
 
 ```bash
 cp .env.example .env
-docker compose run --rm login
-# print the URL, confirm the device, Ctrl+C when "Session saved"
+docker compose run --rm --service-ports login
+# войдите по ссылке, дождитесь надписи "Session saved", завершите команду
 docker compose up -d hop
 ```
 
-RPC is published only on loopback: `127.0.0.1:18765`. Inside the container `HF_RPC_BIND=0.0.0.0` so the port mapping works.
+RPC-порт открывается только на локальном интерфейсе хоста: `127.0.0.1:18765`. Внутри контейнера задается `HF_RPC_BIND=0.0.0.0`, чтобы порт был доступен при пробросе.
 
-Screenshot does not run inside Docker. Use native Node on the remote Windows session for capture.
+Снятие screenshot экрана Windows из контейнера не поддерживается - для захвата экрана запускайте `clean` хоп нативно в сессии пользователя.
 
-## What to click next
+## Куда нажимать и что делать дальше
 
-1. Copy `.env.example` to `.env`. Set `MATRIX_HOMESERVER_URL` and `HF_SIDE`.
-2. `npm install` (or `docker compose build`).
-3. `npm run login`. A browser tab opens (device-code or SSO). Sign in as the Matrix user that both hops will share.
-4. In Element (or another client already logged in as that user): **Settings -> Sessions**. Confirm the new device. Clean hop should be named `hf-matrix`. Dirty hop should be named `hf-dirty`.
-5. Start **clean** on the remote host, **dirty** on the operator. Leave both processes running.
-6. On the operator open `http://127.0.0.1:18765/status`. If it says `"rtc": true`, the tunnel is up.
-7. Cursor: copy `examples/mcp.json` into `~/.cursor/mcp.json` (or merge). Set `cwd` to this clone. Restart Cursor. Tools `clean_status`, `clean_shell`, `clean_screenshot`, ... talk to the remote host.
-8. If RTC stays down: `npm run doctor`, confirm both devices, check TURN TCP on the homeserver.
+1. Скопируйте файл `.env.example` в `.env`. Заполните `MATRIX_HOMESERVER_URL` и выберите сторону `HF_SIDE` (`clean` или `dirty`).
+2. Выполните установку зависимостей: `npm install` (или `docker compose build`).
+3. Запустите авторизацию: `npm run login`. Откроется браузер для входа по SSO или коду устройства. Войдите под учетной записью, выделенной для туннеля.
+4. Откройте Matrix-клиент (например, Element) под этим же пользователем: перейдите в **Параметры -> Сессии** (Settings -> Sessions). Подтвердите добавленные устройства:
+   - на удаленной машине устройство называется `hf-matrix`;
+   - на машине оператора устройство называется `hf-dirty`.
+5. Запустите хопы на обеих машинах: `npm start -- clean` на удаленной и `npm start -- dirty` на операторской. Окна оставьте открытыми.
+6. На машине оператора проверьте статус: откройте в браузере `http://127.0.0.1:18765/status`. Значение `"rtc": true` говорит об успешном подключении.
+7. Подключение Cursor: скопируйте блок из `examples/mcp.json` в `~/.cursor/mcp.json`, укажите в `cwd` путь к каталогу репозитория и перезапустите Cursor. Инструменты `clean_status`, `clean_shell`, `clean_screenshot` и другие станут доступны в окне диалога.
+8. Если статус RTC не поднимается: выполните диагностику командой `npm run doctor`, проверьте имена сессий в Element и доступность TURN TCP на сервере.
 
-Step-by-step: [docs/operations.md](docs/operations.md).
+Пошаговое руководство с пояснениями: [docs/operations.md](docs/operations.md).
 
-## Layout
+## Структура проекта
 
 ```text
-src/            hop daemon, MCP, login, jobs
-scripts/        cross-platform start
-docs/           architecture, env, operations
-examples/       Cursor MCP snippet
-Dockerfile      hop image
-docker-compose  volume + localhost port
+src/            Исходный код хопа, MCP-сервера, авторизации и задач
+scripts/        Кроссплатформенные скрипты запуска и тестов
+docs/           Подробные документы по архитектуре, переменным и эксплуатации
+examples/       Пример конфигурации для Cursor MCP
+Dockerfile      Сборка контейнера хопа
+docker-compose  Запуск контейнера с монтированием хранилища данных
 ```
 
-State on disk (not in git):
+Расположение рабочих данных на диске (не попадает в git):
 
-| Path | What |
+| Путь | Назначение |
 |---|---|
-| `~/.hf-pipe/secrets/matrix-session.json` | access token, device id |
-| `~/.hf-pipe/data/{dirty,clean}/` | Matrix client store |
-| `~/.hf-pipe/local/` | operator inbox/outbox and screenshots |
+| `~/.hf-pipe/secrets/matrix-session.json` | Access token и идентификатор устройства |
+| `~/.hf-pipe/data/{dirty,clean}/` | Локальное состояние клиента Matrix |
+| `~/.hf-pipe/local/` | Очереди задач и сохраненные файлы screenshot на стороне оператора |
 
-Legacy files under `~/.cursor/secrets` are still read if present.
+Если на машине уже существовали каталоги `~/.cursor/secrets`, модуль конфигурации прочитает файл сессии и оттуда.
 
-## Security
+## Безопасность
 
-- RPC binds to localhost by default. Do not publish `18765` on a LAN interface.
-- Session file is an access token. Mode `0600` on Unix. Not in git.
-- ICE is `relay` only. Media does not try host/srflx candidates.
-- Matrix rooms are not used for commands.
+- RPC-сервер по умолчанию слушает только `127.0.0.1`. Не публикуйте порт 18765 в локальную сеть или интернет.
+- Файл `matrix-session.json` содержит access token учетной записи. Доступ к нему должен быть ограничен (права 0600 на Unix). В git он игнорируется.
+- ICE работает исключительно в режиме `relay` (только через TURN). Локальные и публичные адреса хостов не раскрываются.
+- Комнаты Matrix не используются для команд управления.
 
-## Docs
+## Документация
 
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md)
-- [Operations](docs/operations.md)
-- [Rollback](ROLLBACK.md)
+- [Архитектура и потоки данных](docs/architecture.md)
+- [Справочник переменных окружения](docs/configuration.md)
+- [Эксплуатация и решение проблем](docs/operations.md)
+- [Инструкция по откату](docs/rollback.md)
 
-## License
+## Лицензия
 
 MIT

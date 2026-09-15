@@ -1,8 +1,8 @@
-# Security
+# Политика безопасности
 
-- RPC binds to `127.0.0.1` by default. Do not publish port 18765 on a LAN or public interface.
-- `matrix-session.json` is an access token. Keep it out of git. Unix mode `0600`.
-- ICE is relay-only. Host and srflx candidates are not used.
-- Matrix rooms are not a command bus.
+- Локальный RPC-сервер по умолчанию слушает только `127.0.0.1`. Не открывайте порт 18765 на внешних или общедоступных интерфейсах.
+- Файл сессии `matrix-session.json` содержит рабочий access token учетной записи Matrix. На Unix-системах рекомендуется выставлять права доступа `0600`. Файл внесен в `.gitignore` и не должен попадать в репозиторий.
+- WebRTC работает строго в режиме `relay` (только через TURN-сервер). Прямые публичные и локальные IP-адреса хостов не передаются.
+- Комнаты Matrix не используются для команд управления.
 
-Report issues privately to the repository owner.
+Об обнаруженных уязвимостях сообщайте владельцу репозитория.

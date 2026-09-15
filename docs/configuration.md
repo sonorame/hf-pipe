@@ -1,69 +1,70 @@
-# Configuration
+# Справочник параметров конфигурации
 
-Copy `.env.example` to `.env` on each host. `src/config.mjs` loads `.env` from the repo root if the variable is not already in the environment.
+Для настройки скопируйте файл `.env.example` в `.env` на каждом хосте. Модуль `src/config.mjs` автоматически подгружает `.env` из корня репозитория, если переменная еще не задана в окружении.
 
-Paths below use `~` for `$HOME` / `%USERPROFILE%`.
+В путях символ `~` означает домашний каталог пользователя (`$HOME` или `%USERPROFILE%`).
 
-## Required
+## Обязательные параметры
 
-| Variable | Meaning |
-|---|---|
-| `HF_SIDE` | `dirty` or `clean` |
-| `MATRIX_HOMESERVER_URL` | `https://matrix.example.com` |
-
-`npm run login` writes `user_id`, `access_token`, `device_id` into the session file. You do not set the token by hand.
-
-## Session and data
-
-| Variable | Default |
-|---|---|
-| `HF_SECRETS_DIR` | `~/.hf-pipe/secrets` (or `~/.cursor/secrets` if that already exists) |
-| `MATRIX_SESSION_FILE` | `{HF_SECRETS_DIR}/matrix-session.json` |
-| `MATRIX_DATA_DIR` | `~/.hf-pipe/data/{side}` |
-| `HF_LOCAL_DIR` | `~/.hf-pipe/local` |
-| `HF_CLEAN_ROOT` / `HOT_ROOT` | optional extra writable root on clean (legacy folder pipe) |
-| `HF_CLEAN_PROJECT` | optional default cwd on clean |
-| `HF_LAB_SCRIPT` | optional helper script for the `lab` job |
-| `HF_LAB_CONFIG` | optional YAML with `host_aliases` |
-| `MATRIX_OIDC_ISSUER` | `{homeserver}/auth/` |
-| `MATRIX_USER_ID` | from session |
-| `HF_ENV_FILE` | extra env file |
-
-## Network
-
-| Variable | Default | Meaning |
+| Переменная | Значение | Описание |
 |---|---|---|
-| `HF_RPC_BIND` | `127.0.0.1` | HTTP bind. Docker: `0.0.0.0` |
-| `HF_RPC_PORT` | `18765` | HTTP port |
-| `HF_RPC_URL` | `http://127.0.0.1:18765` | MCP / `dirty.py` |
-| `HF_EVENT_TYPE` | `org.hf.pipe` | to-device type |
-| `HF_DNS_PIN` | empty | `host=IPv4,host2=IPv4` |
-| `HF_SYNC_DEAD_MS` | `120000` | exit if sync stuck |
-| `HF_TEMP_KEEP_MS` | `0` | delete leftover hotfolder temp older than this. In-flight `outbox`/`mxinbox` json is kept at least 20s |
-| `HF_TEMP_SWEEP_MS` | `30000` | how often the daemon and `CursorMCP` (`temp-sweep.mjs`) sweep |
-| `HF_TEMP_ROOT` | `HF_LOCAL_DIR` or `~/bin/hotfolder/local` | override sweep root |
-| `HF_OPEN_BROWSER` | `1` | `0` prints the login URL only |
+| `HF_SIDE` | `dirty` или `clean` | Роль стороны: `dirty` для оператора (Cursor, MCP, RPC), `clean` для удаленного хоста (выполнение задач) |
+| `MATRIX_HOMESERVER_URL` | `https://matrix.example.com` | URL сервера Matrix |
 
-## Devices
+Access token, идентификатор пользователя и устройства сохраняются в файл сессии автоматически при выполнении `npm run login`. Вручную указывать токен не требуется.
 
-| Variable | Default |
-|---|---|
-| `HF_DEVICE_NAME` | `hf-dirty` or `hf-matrix` from side |
-| `HF_PEER_CLEAN_NAME` | `hf-matrix` |
-| `HF_PEER_DIRTY_NAME` | `hf-dirty` |
-| `HF_PEER_NAME` | extra substring match |
-| `HF_PEER_DEVICE` | skip name lookup, use this device id |
+## Пути к файлам и каталогам
 
-## Docker
+| Переменная | Значение по умолчанию | Описание |
+|---|---|---|
+| `HF_SECRETS_DIR` | `~/.hf-pipe/secrets` (или `~/.cursor/secrets`, если каталог уже создан) | Каталог хранения файла сессии |
+| `MATRIX_SESSION_FILE` | `{HF_SECRETS_DIR}/matrix-session.json` | Полный путь к файлу активной сессии Matrix |
+| `MATRIX_DATA_DIR` | `~/.hf-pipe/data/{side}` | Каталог локального состояния клиента Matrix |
+| `HF_LOCAL_DIR` | `~/.hf-pipe/local` | Каталог временных очередей и сохраненных screenshot на стороне оператора |
+| `HF_CLEAN_PROJECT` | не задано | Рабочий каталог по умолчанию для запуска команд shell на удаленном хосте |
+| `HF_LAB_SCRIPT` | не задано | Путь к вспомогательному скрипту на удаленном хосте для вызова задачи `lab` |
+| `HF_LAB_CONFIG` | не задано | Путь к конфигурационному файлу со списком алиасов хостов (`host_aliases`) |
+| `MATRIX_OIDC_ISSUER` | `{homeserver}/auth/` | URL эмитента OIDC/MAS (для входа через device code) |
+| `MATRIX_USER_ID` | из файла сессии | Идентификатор пользователя Matrix |
+| `HF_ENV_FILE` | не задано | Путь к дополнительному файлу переменных окружения |
 
-`docker-compose.yml` mounts volume `hf-pipe-data` at `/data` and sets `HF_SECRETS_DIR`, `MATRIX_DATA_DIR`, `HF_LOCAL_DIR` under it. Login and hop must use the same volume so the session file is visible to the daemon.
+## Сетевые параметры
 
-Publish only loopback:
+| Переменная | Значение по умолчанию | Описание |
+|---|---|---|
+| `HF_RPC_BIND` | `127.0.0.1` | Сетевой адрес для привязки HTTP-сервера оператора. В Docker: `0.0.0.0` |
+| `HF_RPC_PORT` | `18765` | Порт локального HTTP-сервера |
+| `HF_RPC_URL` | `http://127.0.0.1:18765` | Базовый адрес RPC для MCP-сервера и скрипта `dirty.py` |
+| `HF_EVENT_TYPE` | `org.hf.pipe` | Тип сообщений Matrix to-device для сигналинга |
+| `HF_DNS_PIN` | пусто | Список статических записей вида `host=IPv4,host2=IPv4` на случай сбоев системного DNS |
+| `HF_SYNC_DEAD_MS` | `120000` | Время в миллисекундах без событий Matrix sync, после которого хоп перезапускается |
+| `HF_TEMP_KEEP_MS` | `0` | Время хранения завершенных временных файлов в очередях (0 - удаление при следующей очистке). Незавершенные файлы очереди хранятся не менее 20 секунд |
+| `HF_TEMP_SWEEP_MS` | `30000` | Интервал периодической очистки временных файлов в миллисекундах |
+| `HF_TEMP_ROOT` | `HF_LOCAL_DIR` | Переопределение каталога для очистки временных файлов |
+| `HF_OPEN_BROWSER` | `1` | Открывать ли браузер автоматически при авторизации. При `0` ссылка только выводится в консоль |
+
+## Имена устройств и поиск пира
+
+| Переменная | Значение по умолчанию | Описание |
+|---|---|---|
+| `HF_DEVICE_NAME` | `hf-dirty` или `hf-matrix` | Отображаемое имя текущего устройства при регистрации сессии |
+| `HF_PEER_CLEAN_NAME` | `hf-matrix` | Подстрока в имени удаленного устройства, которую ищет сторона оператора |
+| `HF_PEER_DIRTY_NAME` | `hf-dirty` | Подстрока в имени устройства оператора, которую ищет удаленная сторона |
+| `HF_PEER_NAME` | не задано | Дополнительная подстрока для поиска парного устройства |
+| `HF_PEER_DEVICE` | не задано | Жестко заданный идентификатор парного устройства (пропускает поиск по имени) |
+
+## Запуск в Docker
+
+Файл `docker-compose.yml` монтирует постоянный том `hf-pipe-data` в точку `/data` контейнера и перенаправляет переменные `HF_SECRETS_DIR`, `MATRIX_DATA_DIR` и `HF_LOCAL_DIR` внутрь этого тома.
+
+Благодаря этому контейнер авторизации (`login`) и рабочий контейнер хопа (`hop`) работают с единым файлом сессии.
+
+Порт на хосте открывается только на локальной петле:
 
 ```text
 127.0.0.1:18765:18765
 ```
 
-## Cursor MCP
+## Подключение к Cursor MCP
 
-See `examples/mcp.json`. `cwd` must be the clone. After changing `mcp.json`, restart Cursor.
+Пример конфигурации находится в `examples/mcp.json`. В поле `cwd` необходимо указать абсолютный путь к склонированному репозиторию. После редактирования `~/.cursor/mcp.json` перезапустите Cursor.

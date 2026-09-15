@@ -1,100 +1,123 @@
-# Operations
+# Руководство по эксплуатации
 
-This is the operator path after clone. No hostnames from a private lab.
+Пошаговая инструкция по первоначальной настройке, запуску, подключению к Cursor и решению возможных неполадок.
 
-## 1. Env
+## 1. Подготовка конфигурации
+
+Скопируйте шаблон переменных окружения:
 
 ```bash
 cp .env.example .env
 ```
 
-Set `MATRIX_HOMESERVER_URL`. Set `HF_SIDE=clean` on the remote host and `HF_SIDE=dirty` on the operator. Optional: `HF_DNS_PIN=homeserver.example=203.0.113.10` if local DNS dies after sleep.
+Отредактируйте `.env`:
+- Задайте адрес вашего сервера: `MATRIX_HOMESERVER_URL=https://matrix.example.com`.
+- На удаленной машине установите `HF_SIDE=clean`.
+- На машине оператора установите `HF_SIDE=dirty`.
+- При необходимости задайте статический IP для Matrix-сервера: `HF_DNS_PIN=matrix.example.com=203.0.113.10` (помогает при сбоях разрешения имен после выхода системы из сна).
 
-## 2. Install
+## 2. Установка
 
-Native: `npm install` (Node 20+).
+При локальном запуске (требуется Node.js 20+):
 
-Docker: `docker compose build`.
+```bash
+npm install
+```
 
-## 3. Login
+При запуске через Docker:
 
-Native:
+```bash
+docker compose build
+```
+
+## 3. Авторизация в Matrix
+
+При локальном запуске:
 
 ```bash
 npm run login
 ```
 
-A browser tab opens. Complete SSO or the device-code page. If the browser does not open, copy the URL from the terminal (`HF_OPEN_BROWSER=0` also prints only the URL).
+В браузере откроется окно авторизации по SSO или коду устройства. Завершите вход. Если браузер не открылся автоматически, скопируйте ссылку из консоли.
 
-Docker:
+При запуске через Docker:
 
 ```bash
 docker compose run --rm --service-ports login
 ```
 
-Confirm, wait for `Session saved`, stop the container.
+Завершите вход в браузере. После появления в консоли сообщения "Session saved" завершите команду.
 
-## 4. Confirm the device in Element
+## 4. Подтверждение сессии в клиенте Matrix
 
-1. Open Element (or another client) as the **same** Matrix user.
-2. Settings -> Sessions (sometimes "Devices").
-3. Find the new session:
-   - remote hop: display name `hf-matrix`
-   - operator hop: display name `hf-dirty`
-4. Verify / confirm it. Until this is done, to-device events may not flow.
+1. Откройте Matrix-клиент (например, Element), войдя под той же учетной записью.
+2. Перейдите в **Параметры -> Сессии** (или Безопасность -> Устройства).
+3. Найдите зарегистрированное устройство:
+   - для удаленного хоста: имя `hf-matrix`;
+   - для хоста оператора: имя `hf-dirty`.
+4. Подтвердите или верифицируйте новое устройство. Без подтверждения сервер может блокировать доставку сообщений to-device.
 
-Login uses those display names. Override with `HF_DEVICE_NAME` before login if you need other labels, then set `HF_PEER_CLEAN_NAME` / `HF_PEER_DIRTY_NAME` to match.
+Имена устройств задаются автоматически, но при необходимости их можно переопределить переменной `HF_DEVICE_NAME` до выполнения входа.
 
-## 5. Start hops
+## 5. Запуск хопов
 
-Remote:
+**На удаленной машине:**
 
 ```bash
 npm start -- clean
 ```
 
-Operator:
+**На машине оператора:**
 
 ```bash
 npm start -- dirty
 ```
 
-Leave both running. The loop restarts Node if it exits.
+Оставьте окна процессов запущенными. Внутренний цикл автоматически перезапустит Node в случае непредвиденного завершения.
 
-Logs to expect:
+Ожидаемые строки в логах:
+- `session @user:server DEVICEID to-device org.hf.pipe` - сессия прочитана, сигналинг активен;
+- `hf-pipe rust crypto off` - криптография комнат отключена, используется легковесный режим хопа;
+- `rpc http 127.0.0.1:18765` - локальный HTTP-сервер на стороне оператора запущен;
+- `rtc turn` и затем `rtc up` - WebRTC datachannel успешно установлен.
 
-- `session @user:server DEVICEID to-device org.hf.pipe`
-- `hf-pipe rust crypto off`
-- `rpc http 127.0.0.1:18765` (dirty)
-- `rtc turn` then `rtc up`
+## 6. Проверка состояния туннеля
 
-## 6. Check the tunnel
+На машине оператора:
+- Откройте в браузере адрес: `http://127.0.0.1:18765/status`. Должен вернуться ответ с `"rtc": true`.
+- Выполните тестовую команду в консоли: `python src/dirty.py ask hostname`.
+- Сделайте пробный снимок экрана: `python src/dirty.py ask screenshot`.
 
-On the operator:
+Для полной проверки сетевого стека, DNS и версии Node выполните:
 
-- browser: `http://127.0.0.1:18765/status` -> `"rtc": true`
-- `python src/dirty.py ask hostname`
+```bash
+npm run doctor
+```
 
-`npm run doctor` prints Node version, DNS, and `GET /_matrix/client/versions`.
+## 7. Интеграция с Cursor (MCP)
 
-## 7. Cursor
+1. Откройте конфигурационный файл `~/.cursor/mcp.json`.
+2. Добавьте блок сервера `clean-pc` из файла `examples/mcp.json`:
+   - В поле `command` укажите `node`.
+   - В поле `args` укажите `["src/hf-clean-mcp.mjs"]`.
+   - В поле `cwd` укажите абсолютный путь к склонированному каталогу `hf-pipe`.
+3. Перезапустите Cursor.
+4. В чате Cursor вызовите инструмент `clean_status` для проверки доступности туннеля. При успешном статусе станут доступны инструменты `clean_shell`, `clean_list`, `clean_read`, `clean_write`, `clean_screenshot` и другие.
 
-Merge `examples/mcp.json` into `~/.cursor/mcp.json`. Point `args` / `cwd` at this clone. Restart Cursor. Call `clean_status`. If it reports rtc down, restart both hops.
+## 8. Особенности снятия screenshot на Windows
 
-## 8. Windows screenshot
+Снятие снимка экрана на стороне удаленного хоста (`clean`) использует PowerShell. Процесс хопа должен работать в интерактивной пользовательской сессии (под той же учетной записью, под которой выполнен вход на рабочий стол). При автозапуске через планировщик Windows (`src/install-watchdog.cmd`) задача настраивается именно от имени интерактивного пользователя, а не учетной записи SYSTEM.
 
-Screenshot runs PowerShell on the **clean** host. The hop process must run in the interactive user session (the same session as the desktop). Task Scheduler: interactive logon, not SYSTEM.
+Интерактивный live-просмотр экрана через браузер и удаленное управление мышью или клавиатурой в состав хопа не входят - хоп предназначен для выполнения служебных задач и снятия статических screenshot.
 
-Live viewer, mouse and keyboard are not part of the hop.
+## Если туннель WebRTC не поднимается
 
-## If RTC stays down
+1. Убедитесь, что хопы запущены на обеих сторонах, а сессии подтверждены в Element.
+2. Проверьте имена устройств: если они отличаются от стандартных, укажите явный идентификатор парного устройства в переменной `HF_PEER_DEVICE`.
+3. Проверьте ответ Matrix-сервера: запрос `GET /_matrix/client/v3/voip/turnServer` должен возвращать записи TURN или TURNS с параметром `transport=tcp`.
+4. Запустите `npm run doctor` на обеих машинах для проверки доступностиhomeserver и корректности разрешения DNS.
+5. После выхода из сна или гибернации хоп автоматически перезапустится при скачке системных часов более чем на 60 секунд. При необходимости перезапустите оба процесса вручную.
 
-1. Both hops started, both sessions confirmed.
-2. `HF_PEER_DEVICE` set to the other device id if names do not match.
-3. Homeserver `voip/turnServer` returns `turn:` or `turns:` with `transport=tcp`.
-4. `npm run doctor` on both hosts.
-5. Restart hops after hibernate (clock jump already exits 7 and the loop comes back).
+## Откат на базовую версию
 
-## Rollback
-
-Tag `working-baseline-2026-09-15` is an older snapshot of the hop. See `ROLLBACK.md`.
+Если требуется вернуться к исходному состоянию до изменений, используйте тег `working-baseline-2026-09-15`. Подробная инструкция приведена в [rollback.md](rollback.md).

@@ -1,102 +1,112 @@
-# Architecture
+# Архитектура hf-pipe
 
-hf-pipe is a two-process hop. Both processes log in as the same Matrix user, on different devices. They never open a TCP listener toward each other.
+hf-pipe состоит из двух процессов-хопов. Оба процесса авторизуются на одном сервере Matrix под одним и тем же пользователем, но с разными идентификаторами устройств. Процессы никогда не открывают входящие TCP-порты навстречу друг другу.
 
 ```text
-[Cursor / python]
-        | stdio MCP or HTTP
+[Cursor / Python CLI]
+        | stdio MCP или локальный HTTP
         v
-[dirty hop]  127.0.0.1:18765
+[хоп dirty (оператор)]  127.0.0.1:18765
         | to-device org.hf.pipe   lane=rtc|d2c|c2d
         v
-   Matrix homeserver
+   Сервер Matrix (сигналинг)
         ^
         | TURN TCP/TLS  iceTransportPolicy=relay
         v
-[clean hop]
-        | fs / shell / screenshot
+[хоп clean (удаленный хост)]
+        | файловая система / shell / screenshot
         v
-   remote session
+   Удаленная операционная система
 ```
 
-## Why this split
+## Почему выбрана такая схема
 
-Direct TCP between the hosts is not available. A homeserver both hosts can already reach is the signaling path. A TURN server both hosts can already reach is the data path. After SDP/ICE, RPC does not go through Matrix events.
+Между двумя машинами отсутствует прямой сетевой маршрут. Чтобы установить связь:
+1. Matrix-сервер, доступный обеим сторонам, выступает каналом сигналинга. Через него передаются только SDP-описания и кандидаты ICE.
+2. TURN-сервер, доступный обеим сторонам по TCP/TLS, выступает транспортом WebRTC.
+3. После установки WebRTC datachannel все запросы и ответы (RPC) идут напрямик по этому каналу. Matrix-события для передачи данных больше не задействуются.
 
-## Planes
+## Уровни взаимодействия
 
-| Plane | Transport | Content |
+| Уровень | Транспорт | Что передается |
 |---|---|---|
-| Signaling | Matrix `sendToDevice` type `org.hf.pipe` | SDP, ICE, tiny control frames |
-| Media / RPC | WebRTC datachannel `hf` via TURN TCP or TURNS | Binary HFP1, 16 KiB chunks, REQ/RES |
-| Operator API | HTTP `127.0.0.1` | `/status`, `/ask` |
-| Cursor | MCP stdio | proxies POST `/ask` |
+| Сигналинг | Matrix `sendToDevice` тип `org.hf.pipe` | SDP-офферы, ответы, кандидаты ICE и редкие сервисные кадры |
+| Данные и RPC | WebRTC datachannel `hf` через TURN TCP или TURNS | Бинарный протокол HFP1, блоки по 16 КиБ, команды и ответы |
+| API оператора | HTTP на `127.0.0.1` | Конечные точки `/status` и `/ask` |
+| Интеграция с Cursor | stdio MCP (`clean-pc`) | Проксирование запросов в POST `/ask` |
 
-Envelope:
+Формат конверта сигналинга:
 
 ```json
 { "hf": 1, "lane": "rtc", "frame": {} }
 ```
 
-Lanes: `rtc` signaling, `d2c` dirty-to-clean jobs, `c2d` results. Job payload prefers the datachannel. to-device is the fallback when RTC is down and the frame is small enough.
+Потоки (`lane`):
+- `rtc` - сигналинг WebRTC;
+- `d2c` - задачи от оператора к удаленному хосту;
+- `c2d` - результаты выполнения от удаленного хоста к оператору.
 
-## Components
+Основная масса данных всегда идет через WebRTC datachannel. Канал to-device используется как резервный для мелких управляющих кадров, если WebRTC еще не поднялся.
 
-| Module | Job |
+## Состав компонентов
+
+| Модуль | Назначение |
 |---|---|
-| `src/index.mjs` | side switch, session, HTTP, to-device pump |
-| `src/matrix/client.ts` | matrix-js-sdk, hop sync filter, no rust crypto |
-| `src/network-policy.ts` | ipv4first, Happy Eyeballs, optional DNS pin, `pinnedFetch` |
-| `src/rtc-pipe.mjs` | werift PeerConnection, TURN TCP, HFP1 |
-| `src/clean-jobs.mjs` | filesystem, shell, screenshot |
-| `src/hf-clean-mcp.mjs` | MCP tools on the operator |
-| `src/login.mjs` | OIDC device code, SSO fallback |
+| `src/index.mjs` | Определение роли (clean/dirty), загрузка сессии, локальный HTTP-сервер, очередь отправки to-device |
+| `src/matrix/client.ts` | Инициализация matrix-js-sdk, облегченный фильтр синхронизации, отключение лишней криптографии комнат |
+| `src/network-policy.ts` | Политика DNS `ipv4first`, Happy Eyeballs, статический пин адресов при отказе системного DNS, `pinnedFetch` |
+| `src/rtc-pipe.mjs` | Создание WebRTC PeerConnection через библиотеку werift, поддержка TURN TCP, упаковка кадров HFP1 |
+| `src/clean-jobs.mjs` | Обработка задач на удаленном хосте: запуск shell, обход каталогов, чтение, запись, снятие screenshot |
+| `src/clean-context.mjs` | Сбор сводки об удаленном хосте (имя, пользователь, проектный каталог, вспомогательные скрипты) |
+| `src/hf-clean-mcp.mjs` | Сервер MCP для Cursor (инструменты с префиксом `clean_*`) |
+| `src/login.mjs` | Вход через Matrix/OIDC device-code с fallback на SSO |
 
-Hop does not call `initRustCrypto`. `keys/upload` 400 "already exists" is mapped to 200 so a hop device does not knock the homeserver over.
+В режиме хопа библиотека Matrix работает без инициализации Rust Crypto для комнат, так как обмен идет только личными служебными сообщениями to-device. Ошибка homeserver 400 "already exists" при загрузке ключей перехватывается, чтобы процесс не создавал циклическую нагрузку на сервер.
 
-Sync filter for hop: `room.rooms: []`. Presence and room timelines are not needed.
+Фильтр синхронизации хопа полностью отключает отслеживание комнат (`room.rooms: []`) и статусов присутствия.
 
-## Peer discovery
+## Поиск парного устройства
 
-Both sides list `GET /_matrix/client/v3/devices` and pick the other device by display name:
+При старте каждый хоп опрашивает `GET /_matrix/client/v3/devices` и ищет парное устройство по подстроке в имени:
+- сторона `dirty` ищет устройство с именем `hf-matrix` (настраивается через `HF_PEER_CLEAN_NAME`);
+- сторона `clean` ищет устройство `hf-dirty` или `cursor mcp` (настраивается через `HF_PEER_DIRTY_NAME`).
 
-- dirty looks for `hf-matrix` (override `HF_PEER_CLEAN_NAME`)
-- clean looks for `hf-dirty` or `cursor mcp` (override `HF_PEER_DIRTY_NAME`)
+Если в аккаунте зарегистрировано несколько устройств с похожими именами, можно жестко зафиксировать идентификатор в переменной `HF_PEER_DEVICE`.
 
-Pin a device id with `HF_PEER_DEVICE` if names collide.
+## HTTP-сервер на стороне оператора
 
-## HTTP on dirty
-
-| Path | Method | Result |
+| Путь | Метод | Назначение |
 |---|---|---|
-| `/status` | GET | `{ rtc, pid, side }` |
-| `/ask` | POST | one RPC job, JSON body `{ id, type, body }` |
+| `/status` | GET | Возвращает JSON со статусом WebRTC (`rtc: true/false`), PID процесса и роль стороны |
+| `/ask` | POST | Выполнение одной задачи. Тело запроса: `{ id, type, body }` |
 
-Bind: `HF_RPC_BIND` (default `127.0.0.1`). Docker sets `0.0.0.0` and publishes the port only on the host loopback.
+Адрес привязки задается через `HF_RPC_BIND` (по умолчанию `127.0.0.1`). Внутри Docker-контейнера используется `0.0.0.0`, а наружу пробрасывается только локальный интерфейс хоста.
 
-## Jobs
+## Поддерживаемые задачи
 
-`ping`, `context`, `lab`, `shell`, `list`, `tree`, `glob`, `grep`, `read`, `write`, `screenshot`.
+- `ping` - проверка доступности удаленного хоста и базовые сведения о системе.
+- `context` - сводка по удаленному хосту (имя компьютера, пользователь, каталог проекта, доступные алиасы).
+- `lab` - выполнение команд через вспомогательный скрипт (`HF_LAB_SCRIPT`).
+- `shell` - выполнение произвольной консольной команды с таймаутом.
+- `list`, `tree`, `glob`, `grep` - навигация и поиск по файловой системе удаленного хоста.
+- `read`, `write` - чтение и запись текстовых и бинарных файлов.
+- `screenshot` - получение снимка удаленного рабочего стола.
 
-Screenshot coordinates are pixels of the remote virtual desktop when the capture helper is present.
+При указании переменной `HF_CLEAN_PROJECT` она используется как рабочий каталог по умолчанию для запуска команд shell.
 
-Optional `HF_CLEAN_PROJECT` is the default cwd for shell. Optional `HF_LAB_SCRIPT` is a helper invoked by the `lab` job.
+## Механизмы надежности и самовосстановления
 
-## Restart
+1. Внешний цикл `scripts/run.mjs` (и `start-*.cmd`): если процесс Node завершился, скрипт выдерживает паузу 4 секунды и запускает его снова.
+2. Контроль Matrix sync: если состояние синхронизации не переходит в `SYNCING`, `PREPARED` или `CATCHUP` дольше значения `HF_SYNC_DEAD_MS` (по умолчанию 120 секунд), процесс завершается с кодом 7 для перезапуска внешним циклом.
+3. Контроль скачка часов: при выходе из сна или гибернации скачок системного времени больше 60 секунд приводит к немедленному перезапуску процесса с кодом 7.
+4. Повтор оффера WebRTC: сторона `dirty` автоматически генерирует новый оффер, если соединение не перешло в состояние `up`. Состояние `connecting` старше 8 секунд сбрасывается и не блокирует очередь.
 
-1. `scripts/run.mjs` (and `start-*.cmd`) loop: Node exits, wait 4s, start again.
-2. If `/sync` is not `SYNCING` / `PREPARED` / `CATCHUP` for `HF_SYNC_DEAD_MS` (default 120s), the process exits 7.
-3. If the wall clock jumps more than 60s (hibernate), the process exits 7.
-4. Windows optional: Task Scheduler task, interactive token of the logged-in user.
+## Сетевые границы
 
-RTC: dirty sends a new offer if the datachannel is not up. A `connecting` state older than 8s does not keep the PC stuck.
+- Прямой сетевой обмен между машинами оператора и удаленного хоста отсутствует.
+- Комнаты Matrix не используются для команд управления.
+- Инструменты Cursor на локальной машине видят только диск оператора. Доступ к удаленному диску осуществляется исключительно через инструменты MCP `clean_*` или CLI `dirty.py`.
 
-## Boundaries
+## Сетевой стек
 
-- No inbound TCP from dirty to clean or the reverse.
-- No Matrix room as a command bus.
-- Operator native file tools see the operator disk. Remote disk is MCP or `dirty.py`.
-
-## HTTP stack
-
-One fetch per process: Node `globalThis.fetch` / undici, `fetchFn: pinnedFetch`. Not `node-fetch` plus `https.Agent`, not `family: 4`. DNS pin is optional (`HF_DNS_PIN`) for hosts whose OS resolver dies after sleep.
+Все HTTP-запросы внутри одного процесса идут через единую реализацию `pinnedFetch` поверх встроенного `globalThis.fetch`. Библиотека `node-fetch` с кастомным `https.Agent` и принудительным `family: 4` не используется. При необходимости статической привязки IP-адресов при сбоях системного DNS после гибернации используется переменная `HF_DNS_PIN`.
