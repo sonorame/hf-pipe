@@ -29,7 +29,7 @@ test("daemon entry applies Node network policy before Matrix boot", () => {
 test("compiled network-policy exports pinnedFetch for index.mjs", () => {
   const dist = readFileSync(join(here, "../dist/network-policy.js"), "utf8");
   assert.equal(indexSrc.includes("pinnedFetch"), true);
-  assert.equal(dist.includes("export function pinnedFetch"), true);
+  assert.match(dist, /export (async )?function pinnedFetch/);
   assert.equal(dist.includes("https.Agent"), false);
 });
 

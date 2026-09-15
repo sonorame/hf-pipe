@@ -1,6 +1,7 @@
+import { createRequire } from "node:module";
 import dns from "node:dns";
 import net from "node:net";
-import { createRequire } from "node:module";
+import { mapKeysUploadResponse } from "./hop-client-mode.js";
 
 const require = createRequire(import.meta.url);
 
@@ -99,14 +100,23 @@ function installPinnedLookup(): void {
   );
 }
 
-export function pinnedFetch(input: any, init?: any): Promise<Response> {
+export async function pinnedFetch(input: any, init?: any): Promise<Response> {
   applyNodeNetworkPolicy();
+  const url = typeof input === "string" ? input : String(input?.url || input || "");
+  let res: Response;
   try {
     const undici = loadUndici();
-    return undici.fetch(input, { ...(init || {}), dispatcher });
+    res = await undici.fetch(input, { ...(init || {}), dispatcher });
   } catch {
-    return fetch(input, init) as Promise<Response>;
+    res = await fetch(input, init);
   }
+  if (res.status !== 400 || !url.includes("/keys/upload")) return res;
+  const body = await res.text();
+  const mapped = mapKeysUploadResponse(url, res.status, body);
+  return new Response(mapped.body, {
+    status: mapped.status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 export function pinHost(hostname: string, ip?: string): void {
