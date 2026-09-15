@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import http from "http";
 import { applyNodeNetworkPolicy, pinnedFetch } from "./dist/network-policy.js";
+import { shouldRecycleAfterClockJump } from "./dist/watchdog-clock.js";
 import { runCleanJob } from "./clean-jobs.mjs";
 
 applyNodeNetworkPolicy();
@@ -558,6 +559,15 @@ async function daemon() {
     throw new Error("set HF_SIDE=dirty|clean");
   }
   writePid();
+  let lastTick = Date.now();
+  setInterval(() => {
+    const now = Date.now();
+    if (shouldRecycleAfterClockJump(lastTick, now)) {
+      log("clock jump", now - lastTick, "exit for watchdog");
+      process.exit(7);
+    }
+    lastTick = now;
+  }, 5000);
   const session = await loadSessionForever();
   const cleanRoot = side === "clean" ? detectCleanRoot() : null;
   if (side === "clean") log("CLEAN ROOT", cleanRoot || "(none, ping/shell in-process)");

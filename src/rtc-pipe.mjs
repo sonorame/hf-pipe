@@ -1,5 +1,6 @@
 import { RTCPeerConnection } from "werift";
 import { pinHost, pinnedFetch } from "./dist/network-policy.js";
+import { shouldRetryRtcOffer } from "./dist/rtc-retry.js";
 
 const MAGIC = Buffer.from("HFP1");
 const TYPE_PING = 1;
@@ -371,9 +372,18 @@ export async function startRtc(opts) {
         sendKeepalive();
         return;
       }
-      if (pc && ["connecting", "checking"].includes(String(pc.connectionState)) ) return;
-      if (pc && pc.iceConnectionState === "checking") return;
-      if (Date.now() - lastOfferAt < 20000) return;
+      if (
+        !shouldRetryRtcOffer({
+          dcOpen,
+          dcReadyState: dc?.readyState,
+          connectionState: pc?.connectionState,
+          iceConnectionState: pc?.iceConnectionState,
+          lastOfferAt,
+          now: Date.now(),
+        })
+      ) {
+        return;
+      }
       log("rtc retry offer");
       startOfferer().catch((e) => log("rtc retry", e.message || e));
     }, 4000);

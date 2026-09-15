@@ -36,5 +36,5 @@ set HF_SIDE=clean
 :loop
 "%NODE%" "%HOME%\index.mjs" clean
 echo node exited %ERRORLEVEL% - restart in 4s
-timeout /t 4 /nobreak >nul
+ping 127.0.0.1 -n 5 >nul
 goto loop

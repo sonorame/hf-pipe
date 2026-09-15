@@ -1,6 +1,8 @@
 import dns from "node:dns";
 import net from "node:net";
-import { Agent, setGlobalDispatcher, fetch as undiciFetch } from "node:undici";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 /** Node lookup order. Official: dns.setDefaultResultOrder. Not Agent family: 4. */
 export const DNS_RESULT_ORDER = "ipv4first" as const;
@@ -15,8 +17,14 @@ export const PINNED_A: Record<string, string> = {
   "mtx-1.zala-soft.com": "78.85.7.132",
 };
 
+type UndiciMod = {
+  Agent: new (opts: { connect?: { lookup?: typeof dns.lookup } }) => unknown;
+  setGlobalDispatcher: (dispatcher: unknown) => void;
+  fetch: (input: unknown, init?: unknown) => Promise<Response>;
+};
+
 let pinsInstalled = false;
-let dispatcher: Agent | undefined;
+let dispatcher: unknown;
 const origLookup = dns.lookup.bind(dns);
 const origPromisesLookup = dns.promises.lookup.bind(dns.promises);
 
@@ -26,6 +34,10 @@ function normalizeHost(hostname: string): string {
 
 function pinnedIp(hostname: string): string | undefined {
   return PINNED_A[normalizeHost(hostname)];
+}
+
+function loadUndici(): UndiciMod {
+  return require("node:undici") as UndiciMod;
 }
 
 export function pinnedLookup(
@@ -38,7 +50,8 @@ export function pinnedLookup(
     options = {};
   }
   const ip = pinnedIp(hostname);
-  if (ip) {
+  const familyWanted = options && typeof options === "object" ? options.family : undefined;
+  if (ip && familyWanted !== 6) {
     if (options && options.all) {
       callback(null, [{ address: ip, family: 4 }]);
     } else {
@@ -58,7 +71,7 @@ function installPinnedLookup(): void {
   dns.promises.lookup = ((hostname: string, options?: any) => {
     const opts = options && typeof options === "object" ? options : {};
     const ip = pinnedIp(hostname);
-    if (ip) {
+    if (ip && opts.family !== 6) {
       if (opts.all) {
         return Promise.resolve([{ address: ip, family: 4 }]);
       }
@@ -67,12 +80,17 @@ function installPinnedLookup(): void {
     return origPromisesLookup(hostname, options as any);
   }) as typeof dns.promises.lookup;
 
-  dispatcher = new Agent({
-    connect: {
-      lookup: pinnedLookup,
-    },
-  });
-  setGlobalDispatcher(dispatcher);
+  try {
+    const undici = loadUndici();
+    dispatcher = new undici.Agent({
+      connect: {
+        lookup: pinnedLookup as typeof dns.lookup,
+      },
+    });
+    undici.setGlobalDispatcher(dispatcher);
+  } catch {
+    dispatcher = undefined;
+  }
   console.error(
     new Date().toISOString(),
     "hf net pin",
@@ -83,7 +101,12 @@ function installPinnedLookup(): void {
 
 export function pinnedFetch(input: any, init?: any): Promise<Response> {
   applyNodeNetworkPolicy();
-  return undiciFetch(input, { ...(init || {}), dispatcher } as any) as Promise<Response>;
+  try {
+    const undici = loadUndici();
+    return undici.fetch(input, { ...(init || {}), dispatcher });
+  } catch {
+    return fetch(input, init) as Promise<Response>;
+  }
 }
 
 export function pinHost(hostname: string, ip?: string): void {
