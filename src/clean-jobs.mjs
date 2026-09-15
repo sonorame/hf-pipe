@@ -10,7 +10,9 @@ import {
 import { basename, dirname, extname, join } from "path";
 import { fileURLToPath } from "url";
 import os from "os";
-import { execFileSync, execSync } from "child_process";
+import { execFileSync, execSync, spawn } from "child_process";
+import { createInterface } from "readline";
+import { LIVE_QUALITY, LIVE_MAXW } from "./view-shot.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MAX_OUT = 400_000;
@@ -246,10 +248,85 @@ function opWrite(body) {
   return { ok: true, path: p, bytes: buf.length };
 }
 
+let captureProc = null;
+let captureLineWait = null;
+
+function stopCaptureDaemon() {
+  if (!captureProc) return;
+  try {
+    captureProc.stdin.end();
+  } catch {
+    // ignore
+  }
+  try {
+    captureProc.kill();
+  } catch {
+    // ignore
+  }
+  captureProc = null;
+  captureLineWait = null;
+}
+
+function ensureCaptureDaemon() {
+  if (captureProc && captureProc.exitCode == null) return captureProc;
+  const ps1 = join(HERE, "capture-loop.ps1");
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1],
+    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  const rl = createInterface({ input: child.stdout });
+  rl.on("line", (line) => {
+    const wait = captureLineWait;
+    captureLineWait = null;
+    if (!wait) return;
+    try {
+      wait.resolve(JSON.parse(line));
+    } catch (e) {
+      wait.reject(e);
+    }
+  });
+  child.on("exit", () => {
+    if (captureProc === child) captureProc = null;
+    const wait = captureLineWait;
+    captureLineWait = null;
+    if (wait) wait.reject(new Error("capture exit"));
+  });
+  captureProc = child;
+  return child;
+}
+
+function captureOnce(req, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const child = ensureCaptureDaemon();
+    if (captureLineWait) {
+      reject(new Error("capture busy"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      captureLineWait = null;
+      stopCaptureDaemon();
+      reject(new Error("capture timeout"));
+    }, timeoutMs);
+    captureLineWait = {
+      resolve: (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      reject: (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    };
+    child.stdin.write(`${JSON.stringify(req)}\n`);
+  });
+}
+
 async function opScreenshot(body = {}) {
   const jpeg = String(body.fmt || body.format || "").toLowerCase() === "jpeg" || body.jpeg === true;
-  const quality = Math.min(90, Math.max(18, Number(body.quality) || (jpeg ? 32 : 80)));
-  const maxw = Math.max(0, Number(body.maxw) || (jpeg ? 1280 : 0));
+  const quality = Math.min(90, Math.max(18, Number(body.quality) || (jpeg ? LIVE_QUALITY : 80)));
+  const maxw = Math.max(0, Number(body.maxw) || (jpeg ? LIVE_MAXW : 0));
+  const display = Math.max(0, Math.floor(Number(body.display) || 0));
   const ext = jpeg ? ".jpg" : ".png";
   const tag = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const out = join(os.tmpdir(), `cap-${tag}${ext}`);
@@ -265,27 +342,63 @@ async function opScreenshot(body = {}) {
         `$bmp.Save('${outEsc}', $codec, $ep)`,
       ]
     : [`$bmp.Save('${outEsc}', [System.Drawing.Imaging.ImageFormat]::Png)`];
+
+  if (jpeg) {
+    try {
+      const geom = await captureOnce({ display, maxw, quality, out }, 2500);
+      if (!geom?.ok) return { ok: false, error: geom?.error || "capture failed" };
+      const data = readFileSync(out);
+      if (data.length > MAX_BLOB) return { ok: false, error: `shot too big ${data.length}` };
+      return {
+        ok: true,
+        bytes: data.length,
+        mime: "image/jpeg",
+        blob_b64: data.toString("base64"),
+        left: geom.left ?? 0,
+        top: geom.top ?? 0,
+        width: geom.width,
+        height: geom.height,
+        screens: geom.screens || [],
+        display,
+      };
+    } catch {
+      stopCaptureDaemon();
+    } finally {
+      try {
+        unlinkSync(out);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   const script = [
     "Add-Type -AssemblyName System.Windows.Forms,System.Drawing",
-    "$vs = [System.Windows.Forms.SystemInformation]::VirtualScreen",
-    "$bmp = New-Object System.Drawing.Bitmap ([int]$vs.Width), ([int]$vs.Height)",
-    "$g = [System.Drawing.Graphics]::FromImage($bmp)",
-    "$g.CopyFromScreen([int]$vs.Left, [int]$vs.Top, 0, 0, $bmp.Size)",
-    "$g.Dispose()",
+    `$display = ${display}`,
     `$maxw = ${maxw}`,
-    "if ($maxw -gt 0 -and $vs.Width -gt $maxw) {",
+    "$screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y })",
+    "if ($display -lt 0 -or $display -ge $screens.Count) { $scr = $screens | Where-Object { $_.Primary } | Select-Object -First 1 } else { $scr = $screens[$display] }",
+    "if (-not $scr) { $scr = $screens[0] }",
+    "$b = $scr.Bounds",
+    "$bmp = New-Object System.Drawing.Bitmap ([int]$b.Width), ([int]$b.Height)",
+    "$g = [System.Drawing.Graphics]::FromImage($bmp)",
+    "$g.CopyFromScreen([int]$b.X, [int]$b.Y, 0, 0, $bmp.Size)",
+    "$g.Dispose()",
+    "if ($maxw -gt 0 -and $b.Width -gt $maxw) {",
     "  $nw = [int]$maxw",
-    "  $nh = [Math]::Max(1, [int]($vs.Height * $maxw / $vs.Width))",
+    "  $nh = [Math]::Max(1, [int]($b.Height * $maxw / $b.Width))",
     "  $small = New-Object System.Drawing.Bitmap $nw, $nh",
     "  $gs = [System.Drawing.Graphics]::FromImage($small)",
-    "  $gs.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Bilinear",
+    "  $gs.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Low",
     "  $gs.DrawImage($bmp, 0, 0, $nw, $nh)",
     "  $gs.Dispose()",
     "  $bmp.Dispose()",
     "  $bmp = $small",
     "}",
     ...saveBlock,
-    "$meta = @{ left = $vs.Left; top = $vs.Top; width = $vs.Width; height = $vs.Height } | ConvertTo-Json -Compress",
+    "$list = @()",
+    "for ($i = 0; $i -lt $screens.Count; $i++) { $sb = $screens[$i].Bounds; $list += @{ i = $i; x = [int]$sb.X; y = [int]$sb.Y; width = [int]$sb.Width; height = [int]$sb.Height; primary = [bool]$screens[$i].Primary } }",
+    "$meta = @{ left = [int]$b.X; top = [int]$b.Y; width = [int]$b.Width; height = [int]$b.Height; screens = $list } | ConvertTo-Json -Compress -Depth 6",
     `[System.IO.File]::WriteAllText('${metaEsc}', $meta)`,
     "$bmp.Dispose()",
   ].join("\r\n");
@@ -312,6 +425,8 @@ async function opScreenshot(body = {}) {
       top: geom.top ?? 0,
       width: geom.width,
       height: geom.height,
+      screens: geom.screens || [],
+      display,
       cursor_x: geom.cursor_x,
       cursor_y: geom.cursor_y,
     };

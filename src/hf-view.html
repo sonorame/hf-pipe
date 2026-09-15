@@ -5,38 +5,46 @@
   <title>Clean PC</title>
   <style>
     :root { color-scheme: dark; }
-    html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 14px/1.4 Segoe UI, sans-serif; }
-    #bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #1c1c1c; border-bottom: 1px solid #333; }
+    html, body { margin: 0; height: 100%; background: #0b0b0b; color: #eee; font: 13px/1.35 Segoe UI, sans-serif; }
+    #bar { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #1c1c1c; border-bottom: 1px solid #333; flex-wrap: wrap; }
     #bar button, #bar label { background: #2a2a2a; color: #eee; border: 1px solid #444; padding: 4px 8px; cursor: pointer; }
+    #bar button.on { background: #3d5a3d; border-color: #5a7a5a; }
     #status { opacity: 0.8; }
-    #stage { position: relative; overflow: auto; height: calc(100% - 42px); }
-    #shot { display: block; max-width: 100%; cursor: crosshair; }
-    #hint { padding: 8px 12px; opacity: 0.7; }
+    #screens { display: flex; gap: 4px; }
+    #stage { display: flex; align-items: center; justify-content: center; height: calc(100% - 40px); overflow: hidden; background: #050505; }
+    #shot { max-width: 100%; max-height: 100%; object-fit: contain; cursor: crosshair; user-select: none; }
   </style>
 </head>
 <body>
   <div id="bar">
     <button id="live">Live</button>
     <button id="once">Скрин</button>
+    <span id="screens"></span>
     <label><input type="checkbox" id="keys" checked /> клавиатура</label>
     <span id="status">...</span>
   </div>
   <div id="stage">
     <img id="shot" alt="desktop" />
-    <div id="hint">Клик по картинке = клик на чистой. Колесо = скролл. Фокус окна = клавиши.</div>
   </div>
   <script>
     const shot = document.getElementById("shot");
     const status = document.getElementById("status");
+    const screensEl = document.getElementById("screens");
     let geom = { left: 0, top: 0, width: 1, height: 1 };
     let live = true;
     let busy = false;
     let urlObj = null;
+    let display = 0;
+    let screenCount = 1;
+
+    function shotPath() {
+      return "/shot?display=" + display + "&maxw=960&q=22&t=" + Date.now();
+    }
 
     async function ask(type, body, timeout) {
       const res = await fetch("/ask", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Timeout": String(timeout || 20000) },
+        headers: { "Content-Type": "application/json", "X-Timeout": String(timeout || 8000) },
         body: JSON.stringify({ id: Math.random().toString(16).slice(2, 10), type, body: body || {} }),
       });
       return res.json();
@@ -44,12 +52,30 @@
 
     function mapEvent(ev) {
       const r = shot.getBoundingClientRect();
-      const px = (ev.clientX - r.left) / r.width;
-      const py = (ev.clientY - r.top) / r.height;
+      const px = (ev.clientX - r.left) / Math.max(1, r.width);
+      const py = (ev.clientY - r.top) / Math.max(1, r.height);
       return {
         x: geom.left + px * geom.width,
         y: geom.top + py * geom.height,
       };
+    }
+
+    function renderScreens(header) {
+      const parts = String(header || "").split(",").filter(Boolean);
+      if (!parts.length) return;
+      screenCount = parts.length;
+      screensEl.innerHTML = "";
+      parts.forEach((part, i) => {
+        const btn = document.createElement("button");
+        btn.textContent = "Экран " + (i + 1);
+        if (i === display) btn.className = "on";
+        btn.onclick = () => {
+          display = i;
+          renderScreens(header);
+          refresh();
+        };
+        screensEl.appendChild(btn);
+      });
     }
 
     async function refresh() {
@@ -57,12 +83,11 @@
       busy = true;
       const t0 = performance.now();
       try {
-        const st = await fetch("/status").then((r) => r.json());
-        if (!st.rtc) {
+        const res = await fetch(shotPath(), { cache: "no-store" });
+        if (res.status === 503) {
           status.textContent = "rtc down";
           return;
         }
-        const res = await fetch("/shot?maxw=1280&q=32&t=" + Date.now(), { cache: "no-store" });
         if (!res.ok) {
           status.textContent = "shot " + res.status;
           return;
@@ -72,12 +97,15 @@
         geom.top = Number(g[1]) || 0;
         geom.width = Number(g[2]) || 1;
         geom.height = Number(g[3]) || 1;
+        const hdrDisp = Number(res.headers.get("X-Display"));
+        if (Number.isFinite(hdrDisp) && hdrDisp >= 0) display = hdrDisp;
+        renderScreens(res.headers.get("X-Screens"));
         const blob = await res.blob();
         if (urlObj) URL.revokeObjectURL(urlObj);
         urlObj = URL.createObjectURL(blob);
         shot.src = urlObj;
         const ms = Math.round(performance.now() - t0);
-        status.textContent = "rtc up " + ms + " ms " + (res.headers.get("X-Bytes") || blob.size) + " b";
+        status.textContent = (ms > 1000 ? "медленно " : "") + ms + " ms " + (res.headers.get("X-Bytes") || blob.size) + " b";
       } catch (e) {
         status.textContent = String(e.message || e);
       } finally {
@@ -96,7 +124,7 @@
     async function tick() {
       if (!live) return;
       await refresh();
-      setTimeout(tick, live ? 50 : 900);
+      if (live) setTimeout(tick, 0);
     }
 
     shot.addEventListener("mousedown", async (ev) => {
@@ -113,8 +141,23 @@
     }, { passive: false });
 
     window.addEventListener("keydown", async (ev) => {
-      if (!document.getElementById("keys").checked) return;
       if (ev.target && ev.target.tagName === "INPUT") return;
+      if (ev.key === "1" || ev.key === "2") {
+        const next = Number(ev.key) - 1;
+        if (next < screenCount) {
+          ev.preventDefault();
+          display = next;
+          const header = [...screensEl.querySelectorAll("button")].map((b, i) => i + ":1x1").join(",");
+          if (screensEl.childElementCount) {
+            [...screensEl.querySelectorAll("button")].forEach((b, i) => {
+              b.className = i === display ? "on" : "";
+            });
+          }
+          refresh();
+          return;
+        }
+      }
+      if (!document.getElementById("keys").checked) return;
       ev.preventDefault();
       const keys = [];
       if (ev.ctrlKey) keys.push("ctrl");

@@ -5,6 +5,7 @@ import http from "http";
 import { applyNodeNetworkPolicy, pinnedFetch } from "./dist/network-policy.js";
 import { shouldRecycleAfterClockJump } from "./dist/watchdog-clock.js";
 import { runCleanJob } from "./clean-jobs.mjs";
+import { parseShotQuery, screensHeader } from "./view-shot.mjs";
 
 applyNodeNetworkPolicy();
 
@@ -315,7 +316,7 @@ let rtcMod = null;
 function rpcTimeoutMs(frame) {
   const t = String(frame.type || "").toLowerCase();
   const body = frame.body && typeof frame.body === "object" ? frame.body : {};
-  if (t === "screenshot") return 25000;
+  if (t === "screenshot") return 8000;
   if (t === "read" || t === "pull" || t === "write") return 20000;
   if (t === "mouse" || t === "pointer" || t === "click" || t === "key" || t === "keyboard" || t === "type" || t === "hotkey" || t === "input") {
     return 8000;
@@ -345,10 +346,13 @@ function startDirtyHttp() {
           res.end(JSON.stringify({ ok: false, error: "rtc down" }));
           return;
         }
-        const maxw = Number(url.searchParams.get("maxw") || 1280);
-        const quality = Number(url.searchParams.get("q") || 32);
-        const task = { id: Math.random().toString(16).slice(2, 10), type: "screenshot", body: { fmt: "jpeg", maxw, quality } };
-        const result = await rtcMod.rtcCall(task, 18000);
+        const shot = parseShotQuery(url.href);
+        const task = {
+          id: Math.random().toString(16).slice(2, 10),
+          type: "screenshot",
+          body: { fmt: "jpeg", maxw: shot.maxw, quality: shot.quality, display: shot.display },
+        };
+        const result = await rtcMod.rtcCall(task, 4000);
         const body = result.body && typeof result.body === "object" ? result.body : {};
         if (!body.blob_b64) {
           res.writeHead(500, { "Content-Type": "application/json" });
@@ -361,6 +365,8 @@ function startDirtyHttp() {
           "Cache-Control": "no-store",
           "X-Geom": `${body.left || 0},${body.top || 0},${body.width || 0},${body.height || 0}`,
           "X-Bytes": String(buf.length),
+          "X-Display": String(body.display ?? shot.display),
+          "X-Screens": screensHeader(body.screens),
         });
         res.end(buf);
       })().catch((e) => {
