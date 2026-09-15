@@ -1,18 +1,30 @@
 import { createServer } from "http";
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
-import { exec } from "child_process";
+import { dirname } from "path";
+import { platform } from "os";
+import { spawn } from "child_process";
+import {
+  loadEnvFile,
+  sessionFile,
+  oauthClientFile,
+  homeserverUrl,
+  oidcIssuer,
+  deviceDisplayName,
+} from "./config.mjs";
+import { applyNodeNetworkPolicy } from "../dist/network-policy.js";
 
-const HOMESERVER = "https://mtx-1.zala-soft.com";
-const ISSUER = "https://mtx-1.zala-soft.com/auth/";
-const SECRETS = join(process.env.USERPROFILE || "", ".cursor", "secrets");
-const SESSION_PATH = join(SECRETS, "matrix-session.json");
-const CLIENT_PATH = join(SECRETS, "matrix-oauth-client.json");
-const PORT = 18767;
-const DEVICE_NAME = "hf-matrix";
+loadEnvFile();
+applyNodeNetworkPolicy();
+
+const HOMESERVER = homeserverUrl();
+const ISSUER = oidcIssuer();
+const SESSION_PATH = sessionFile();
+const CLIENT_PATH = oauthClientFile();
+const PORT = Number(process.env.HF_LOGIN_PORT || 18767);
+const DEVICE_NAME = deviceDisplayName(process.env.HF_SIDE || "clean");
 
 function saveJson(path, obj) {
-  mkdirSync(SECRETS, { recursive: true });
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(obj, null, 2), "utf8");
 }
 
@@ -25,7 +37,16 @@ function loadJson(path) {
 }
 
 function openBrowser(url) {
-  exec(`cmd /c start "" "${url.replace(/"/g, "")}"`);
+  if (!url) return;
+  if (String(process.env.HF_OPEN_BROWSER || "1") === "0") return;
+  const p = platform();
+  try {
+    if (p === "win32") spawn("cmd", ["/c", "start", "", url], { stdio: "ignore", detached: true, windowsHide: true });
+    else if (p === "darwin") spawn("open", [url], { stdio: "ignore", detached: true });
+    else spawn("xdg-open", [url], { stdio: "ignore", detached: true });
+  } catch {
+    // print URL below
+  }
 }
 
 async function formPost(url, params) {
@@ -141,7 +162,7 @@ function waitSsoLoginToken() {
       server.close();
       resolve(token);
     });
-    server.listen(PORT, "127.0.0.1", () => {
+    server.listen(PORT, process.env.HF_RPC_BIND || "127.0.0.1", () => {
       console.error("Open in browser:");
       console.error(sso);
       openBrowser(sso);
@@ -165,8 +186,24 @@ async function tokenLogin(loginToken) {
   return JSON.parse(text);
 }
 
+async function fillUserId(session) {
+  if (session.user_id) return session;
+  const res = await fetch(`${session.homeserver}/_matrix/client/v3/account/whoami`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const body = await res.json();
+  if (body.user_id) session.user_id = body.user_id;
+  if (body.device_id && !session.device_id) session.device_id = body.device_id;
+  return session;
+}
+
 async function main() {
-  console.error("Homeserver is SSO/MAS only. Password login is disabled.");
+  if (!HOMESERVER) {
+    console.error("Set MATRIX_HOMESERVER_URL in .env");
+    process.exit(1);
+  }
+  console.error("Homeserver:", HOMESERVER);
+  console.error("Device name:", DEVICE_NAME);
   const client = await registerClient();
   let tokens = null;
   if (client?.client_id) {
@@ -184,7 +221,7 @@ async function main() {
       client_id: client?.client_id,
     };
   }
-  const session = {
+  let session = {
     homeserver: HOMESERVER,
     issuer: ISSUER,
     token_endpoint: `${ISSUER}oauth2/token`,
@@ -194,9 +231,10 @@ async function main() {
     refresh_token: tokens.refresh_token,
     device_id: tokens.device_id,
   };
+  session = await fillUserId(session);
   saveJson(SESSION_PATH, session);
   console.error("Session saved:", SESSION_PATH);
-  console.error("Next: node hf-matrix.mjs clean");
+  console.error("Next: npm start --", process.env.HF_SIDE || "clean");
 }
 
 main().catch((e) => {

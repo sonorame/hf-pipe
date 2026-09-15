@@ -1,22 +1,17 @@
 @echo off
 setlocal
-cd /d "%~dp0"
-if exist "%~dp0node.exe" (
-  set "NODE=%~dp0node.exe"
+cd /d "%~dp0.."
+where node >nul 2>&1
+if errorlevel 1 (
+  echo node is not on PATH
+  exit /b 1
+)
+if /I "%~1"=="clean" (
   set "SIDE=clean"
-) else if exist "%ProgramFiles%\nodejs\node.exe" (
-  set "NODE=%ProgramFiles%\nodejs\node.exe"
+) else if /I "%~1"=="dirty" (
   set "SIDE=dirty"
 ) else (
-  set "NODE=%USERPROFILE%\Desktop\hf-matrix-pack\node.exe"
-  set "SIDE=clean"
-)
-if /I "%SIDE%"=="clean" (
-  if not exist "%~dp0node_modules" (
-    if exist "%USERPROFILE%\Desktop\hf-matrix-pack\node_modules" (
-      mklink /J "%~dp0node_modules" "%USERPROFILE%\Desktop\hf-matrix-pack\node_modules" >nul
-    )
-  )
+  set "SIDE=dirty"
 )
 schtasks /Delete /TN "hf-dirty-health" /F >nul 2>&1
 schtasks /Delete /TN "hf-clean-health" /F >nul 2>&1

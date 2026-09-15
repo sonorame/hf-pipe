@@ -2,44 +2,51 @@ import { mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync, exists
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import http from "http";
-import { applyNodeNetworkPolicy, pinnedFetch } from "./dist/network-policy.js";
-import { shouldRecycleAfterClockJump } from "./dist/watchdog-clock.js";
+import {
+  loadEnvFile,
+  sessionFile,
+  dataDir,
+  localDir,
+  cleanRoots,
+  rpcBind,
+  rpcPort,
+  eventType,
+  findMatrixClientModule,
+  sessionUserId,
+  peerNameNeedles,
+} from "./config.mjs";
+import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
+import { shouldRecycleAfterClockJump } from "../dist/watchdog-clock.js";
 import { runCleanJob } from "./clean-jobs.mjs";
-import { parseShotQuery, screensHeader, normalizeScreens } from "./view-shot.mjs";
+import { httpPageKind } from "./hop-surface.mjs";
+import { readHotfolderTempConfig, sweepAllTemp } from "./hotfolder-temp.mjs";
 
+loadEnvFile();
 applyNodeNetworkPolicy();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const EVENT_TYPE = process.env.HF_EVENT_TYPE || "org.hf.pipe";
+const EVENT_TYPE = eventType();
 const SEQ_WIDTH = 8;
 const MAX_EVENT = 55_000;
 const POLL_MS = 700;
-const USER_ID = "@kirill:mtx-1.zala-soft.com";
 
-const secrets = join(process.env.USERPROFILE || "", ".cursor", "secrets");
-const sessionPath = process.env.MATRIX_SESSION_FILE || join(secrets, "matrix-session.json");
+const sessionPath = sessionFile();
+let userId = "";
 
 function sideNow() {
   return (process.env.HF_SIDE || "dirty").toLowerCase();
 }
 
 function getDataDir() {
-  return process.env.MATRIX_DATA_DIR || join(secrets, sideNow() === "clean" ? "matrix-e2ee-clean" : "matrix-e2ee-store");
+  return dataDir(sideNow());
 }
 
 function getSeenPath() {
   return join(getDataDir(), "hf-seen.json");
 }
 
-const CLEAN_ROOTS = [
-  process.env.HOT_ROOT,
-  join(process.env.USERPROFILE || "", "bin", "hotfolder", "mxroot"),
-  "Z:\\malykh_kirill\\folderhot",
-  "\\\\edsizhfs0004.five.loc\\malykh_kirill\\folderhot",
-  "\\\\edsizhfs0001\\Share13\\malykh_kirill\\folderhot",
-].filter(Boolean);
-
-const DIRTY_LOCAL = join(process.env.USERPROFILE || "", "bin", "hotfolder", "local");
+const CLEAN_ROOTS = cleanRoots();
+const DIRTY_LOCAL = localDir();
 
 const origErr = console.error.bind(console);
 console.error = (...args) => {
@@ -203,14 +210,11 @@ async function resolvePeerDevice(myDevice) {
   if (!res.ok) throw new Error(`devices ${res.status} ${text.slice(0, 180)}`);
   const devices = JSON.parse(text).devices || [];
   const others = devices.filter((d) => d.device_id && d.device_id !== myDevice);
-  const side = sideNow();
-  const pred =
-    side === "dirty"
-      ? (d) => nameOf(d).includes("hf-matrix")
-      : (d) => nameOf(d).includes("hf-dirty") || nameOf(d).includes("cursor mcp");
+  const needles = peerNameNeedles(sideNow());
+  const pred = (d) => needles.some((n) => nameOf(d).includes(n));
   const hits = others.filter(pred).sort((a, b) => (b.last_seen_ts || 0) - (a.last_seen_ts || 0));
   const id = hits[0]?.device_id;
-  if (!id) throw new Error("no peer hf device (clean must be hf-matrix, dirty Cursor MCP or hf-dirty)");
+  if (!id) throw new Error(`no peer hf device (looked for: ${needles.join(", ")})`);
   peerCache = { id, at: Date.now() };
   return id;
 }
@@ -226,11 +230,8 @@ async function bootClient(session) {
   delete process.env.MATRIX_RECOVERY_KEY_FILE;
   delete process.env.MATRIX_RECOVERY_KEY;
 
-  const clientJs = [
-    join(HERE, "dist", "matrix", "client.js"),
-    join(process.env.USERPROFILE || "", "Desktop", "hf-matrix-pack", "dist", "matrix", "client.js"),
-  ].find((p) => existsSync(p));
-  if (!clientJs) throw new Error("missing dist/matrix/client.js");
+  const clientJs = findMatrixClientModule();
+  if (!clientJs) throw new Error("missing dist/matrix/client.js (run npm run build)");
   const { createMatrixClient } = await import(pathToFileURL(clientJs).href);
   try {
     const { logger } = await import("matrix-js-sdk/lib/logger.js");
@@ -266,7 +267,7 @@ async function sendFrame(client, lane, frame) {
     },
     body: JSON.stringify({
       messages: {
-        [USER_ID]: {
+        [userId]: {
           [peer]: env,
         },
       },
@@ -278,25 +279,27 @@ async function sendFrame(client, lane, frame) {
   return { peer };
 }
 
-function persistDirtyResult(frame) {
-  ensureDir(join(DIRTY_LOCAL, "outbox"));
+function consumeFile(path) {
+  try {
+    unlinkSync(path);
+  } catch {
+    // already gone
+  }
+}
+
+function persistDirtyResult(frame, { queue = false } = {}) {
   const id = frame.id || "unknown";
   const body = frame.body && typeof frame.body === "object" ? frame.body : {};
   let blob = null;
   if (body.blob_b64) {
     blob = body.blob_b64;
-    const mime = String(body.mime || "");
-    const ext = mime.includes("png") ? ".png" : mime.includes("jpeg") ? ".jpg" : ".bin";
-    const shotDir = join(DIRTY_LOCAL, "shots");
-    ensureDir(shotDir);
-    const shotPath = join(shotDir, `${id}${ext}`);
-    writeFileSync(shotPath, Buffer.from(blob, "base64"));
-    body.saved = shotPath;
     delete body.blob_b64;
     frame.body = body;
-    log("blob", id, shotPath, body.bytes || "");
   }
-  saveJson(join(DIRTY_LOCAL, "outbox", `${id}.json`), frame);
+  if (queue) {
+    ensureDir(join(DIRTY_LOCAL, "outbox"));
+    saveJson(join(DIRTY_LOCAL, "outbox", `${id}.json`), frame);
+  }
   try {
     saveJson(join(DIRTY_LOCAL, "from_clean.txt"), frame);
   } catch {
@@ -307,7 +310,7 @@ function persistDirtyResult(frame) {
 }
 
 function writeDirtyResult(frame) {
-  persistDirtyResult(frame);
+  persistDirtyResult(frame, { queue: true });
 }
 
 let rtcHandler = null;
@@ -318,71 +321,21 @@ function rpcTimeoutMs(frame) {
   const body = frame.body && typeof frame.body === "object" ? frame.body : {};
   if (t === "screenshot") return 15000;
   if (t === "read" || t === "pull" || t === "write") return 20000;
-  if (t === "mouse" || t === "pointer" || t === "click" || t === "key" || t === "keyboard" || t === "type" || t === "hotkey" || t === "input") {
-    return 8000;
-  }
   return ((Number(body.timeout) || 12) + 3) * 1000;
 }
 
 function startDirtyHttp() {
-  const port = Number(process.env.HF_RPC_PORT || 18765);
+  const port = rpcPort();
+  const bind = rpcBind();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
-    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/view")) {
-      try {
-        const html = readFileSync(join(HERE, "hf-view.html"), "utf8");
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-        res.end(html);
-      } catch (e) {
-        res.writeHead(500);
-        res.end(String(e.message || e));
-      }
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/shot") {
-      (async () => {
-        if (!rtcMod?.isRtcUp?.()) {
-          res.writeHead(503, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: "rtc down" }));
-          return;
-        }
-        const shot = parseShotQuery(url.href);
-        const task = {
-          id: Math.random().toString(16).slice(2, 10),
-          type: "screenshot",
-          body: { fmt: "jpeg", maxw: shot.maxw, quality: shot.quality, display: shot.display },
-        };
-        const result = await rtcMod.rtcCall(task, 12000);
-        const body = result.body && typeof result.body === "object" ? result.body : {};
-        if (!body.blob_b64) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: body.error || "no image" }));
-          return;
-        }
-        const buf = Buffer.from(body.blob_b64, "base64");
-        res.writeHead(200, {
-          "Content-Type": body.mime || "image/jpeg",
-          "Cache-Control": "no-store",
-          "X-Geom": `${body.left || 0},${body.top || 0},${body.width || 0},${body.height || 0}`,
-          "X-Bytes": String(buf.length),
-          "X-Display": String(body.display ?? shot.display),
-          "X-Screens": screensHeader(normalizeScreens(body.screens)),
-        });
-        res.end(buf);
-      })().catch((e) => {
-        if (!res.headersSent) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
-        }
-      });
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/status") {
+    const kind = httpPageKind(req.method, url.pathname);
+    if (kind === "status") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ rtc: Boolean(rtcMod?.isRtcUp?.()), pid: process.pid, side: sideNow() }));
       return;
     }
-    if (req.method === "POST" && url.pathname === "/ask") {
+    if (kind === "ask") {
       const chunks = [];
       req.on("data", (c) => chunks.push(c));
       req.on("end", () => {
@@ -402,7 +355,7 @@ function startDirtyHttp() {
             return;
           }
           const result = await rtcMod.rtcCall(task, timeout);
-          const blob = persistDirtyResult(result);
+          const blob = persistDirtyResult(result, { queue: false });
           if (blob && result.body && typeof result.body === "object") {
             result.body.blob_b64 = blob;
           }
@@ -418,7 +371,7 @@ function startDirtyHttp() {
     res.writeHead(404);
     res.end("no");
   });
-  server.listen(port, "127.0.0.1", () => log("rpc http", `127.0.0.1:${port}`));
+  server.listen(port, bind, () => log("rpc http", `${bind}:${port}`));
   server.on("error", (e) => log("rpc http", e.message || e));
 }
 
@@ -479,31 +432,13 @@ async function pumpOutgoing(client, seen, cleanRoot) {
         writeDirtyResult(result);
         seen.frames.add(key);
         saveSeen(seen);
-        try {
-          renameSync(path, join(inbox, "sent", path.split(/[/\\]/).pop()));
-        } catch {
-          ensureDir(join(inbox, "sent"));
-          try {
-            renameSync(path, join(inbox, "sent", path.split(/[/\\]/).pop()));
-          } catch {
-            // leave for retry
-          }
-        }
+        consumeFile(path);
         continue;
       }
       await sendFrame(client, "d2c", frame);
       seen.frames.add(key);
       saveSeen(seen);
-      try {
-        renameSync(path, join(inbox, "sent", path.split(/[/\\]/).pop()));
-      } catch {
-        ensureDir(join(inbox, "sent"));
-        try {
-          renameSync(path, join(inbox, "sent", path.split(/[/\\]/).pop()));
-        } catch {
-          // leave for retry
-        }
-      }
+      consumeFile(path);
     }
     return;
   }
@@ -524,7 +459,13 @@ async function loadSessionForever() {
   for (;;) {
     const session = loadJson(sessionPath, null);
     if (session?.access_token) {
-      if (!session.user_id) session.user_id = USER_ID;
+      if (!session.user_id) session.user_id = sessionUserId(session);
+      if (!session.user_id) {
+        log("session has no user_id, wait 5s", sessionPath);
+        await sleep(5000);
+        continue;
+      }
+      userId = session.user_id;
       return session;
     }
     log("no session, wait 5s", sessionPath);
@@ -565,6 +506,17 @@ async function daemon() {
     throw new Error("set HF_SIDE=dirty|clean");
   }
   writePid();
+  const tempCfg = { ...readHotfolderTempConfig(), root: DIRTY_LOCAL };
+  const sweepTick = () => {
+    try {
+      const n = sweepAllTemp(tempCfg);
+      if (n) log("temp sweep", n);
+    } catch (e) {
+      log("temp sweep", e.message || e);
+    }
+  };
+  sweepTick();
+  setInterval(sweepTick, tempCfg.sweepMs);
   let lastTick = Date.now();
   setInterval(() => {
     const now = Date.now();
@@ -631,7 +583,9 @@ async function sendPing() {
   process.env.HF_SIDE = process.env.HF_SIDE || "dirty";
   const session = loadJson(sessionPath, null);
   if (!session?.access_token) throw new Error("no session");
-  if (!session.user_id) session.user_id = USER_ID;
+  if (!session.user_id) session.user_id = sessionUserId(session);
+  if (!session.user_id) throw new Error("session has no user_id");
+  userId = session.user_id;
   const client = await bootClient(session);
   const id = Math.random().toString(16).slice(2, 12);
   await sendFrame(client, "d2c", { id, type: "ping", body: {} });

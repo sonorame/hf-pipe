@@ -41,7 +41,7 @@ test("MCP client still starts rust crypto", () => {
 
 test("keys/upload already exists is treated as success so rust stops retrying", () => {
   const mapped = mapKeysUploadResponse(
-    "https://mtx-1.zala-soft.com/_matrix/client/v3/keys/upload",
+    "https://matrix.example.com/_matrix/client/v3/keys/upload",
     400,
     '{"errcode":"M_INVALID","error":"One time key signed_curve25519:AAAAAAAAADo already exists"}',
   );
@@ -51,7 +51,7 @@ test("keys/upload already exists is treated as success so rust stops retrying", 
 
 test("other 400 keys/upload stay 400", () => {
   const mapped = mapKeysUploadResponse(
-    "https://mtx-1.zala-soft.com/_matrix/client/v3/keys/upload",
+    "https://matrix.example.com/_matrix/client/v3/keys/upload",
     400,
     '{"errcode":"M_FORBIDDEN","error":"nope"}',
   );

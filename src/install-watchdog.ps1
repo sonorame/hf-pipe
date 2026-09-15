@@ -1,46 +1,23 @@
 param(
   [ValidateSet("dirty", "clean")]
-  [string]$Side = ""
+  [string]$Side = "dirty"
 )
 
 $ErrorActionPreference = "Stop"
-$Dir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$packNode = Join-Path $env:USERPROFILE "Desktop\hf-matrix-pack\node.exe"
-$pfNode = Join-Path $env:ProgramFiles "nodejs\node.exe"
-$localNode = Join-Path $Dir "node.exe"
-
-if (-not $Side) {
-  if (Test-Path -LiteralPath $localNode) { $Side = "clean" }
-  elseif (Test-Path -LiteralPath $pfNode) { $Side = "dirty" }
-  else { $Side = "clean" }
-}
-
-if ($Side -eq "dirty") {
-  if (-not (Test-Path -LiteralPath $pfNode)) { throw "missing $pfNode" }
-  $Node = $pfNode
-} else {
-  if (Test-Path -LiteralPath $localNode) { $Node = $localNode }
-  elseif (Test-Path -LiteralPath $packNode) { $Node = $packNode }
-  else { throw "missing portable node.exe" }
-}
-
-$entry = Join-Path $Dir "index.mjs"
+$Src = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Split-Path -Parent $Src
+$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+if (-not $nodeCmd) { throw "node is not on PATH" }
+$Node = $nodeCmd.Source
+$entry = Join-Path $Src "index.mjs"
 if (-not (Test-Path -LiteralPath $entry)) { throw "missing $entry" }
-
-if ($Side -eq "clean") {
-  $mods = Join-Path (Split-Path $packNode) "node_modules"
-  $link = Join-Path $Dir "node_modules"
-  if ((Test-Path -LiteralPath $mods) -and -not (Test-Path -LiteralPath $link)) {
-    cmd.exe /c "mklink /J `"$link`" `"$mods`"" | Out-Null
-  }
-}
 
 $taskName = "CursorMCP"
 foreach ($old in @("hf-dirty-health", "hf-clean-health", "hf-dirty-logon", "hf-clean-logon")) {
   Unregister-ScheduledTask -TaskName $old -Confirm:$false -ErrorAction SilentlyContinue
 }
 
-$action = New-ScheduledTaskAction -Execute $Node -Argument "index.mjs $Side" -WorkingDirectory $Dir
+$action = New-ScheduledTaskAction -Execute $Node -Argument "src/index.mjs $Side" -WorkingDirectory $Root
 $repeat = New-TimeSpan -Minutes 2
 $duration = New-TimeSpan -Days 9999
 $tRepeat = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) -RepetitionInterval $repeat -RepetitionDuration $duration
@@ -58,4 +35,4 @@ foreach ($old in @("hf-dirty.lnk", "hf-clean.lnk")) {
   if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
 }
 
-Write-Output "ok $taskName $Side $Node index.mjs"
+Write-Output "ok $taskName $Side $Node src/index.mjs"

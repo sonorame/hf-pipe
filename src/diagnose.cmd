@@ -1,8 +1,7 @@
 @echo off
 chcp 65001 >nul
-cd /d "%~dp0"
-if exist "%~dp0node.exe" (set "NODE=%~dp0node.exe") else (set "NODE=node.exe")
+cd /d "%~dp0.."
 echo NODE=%NODE%
-"%NODE%" "%~dp0diagnose.mjs"
+node src\diagnose.mjs
 echo.
 pause

@@ -1,4 +1,6 @@
 node_modules/
+dist/
+compiled/
 *.pid
 *.png
 *.jpg
@@ -16,3 +18,4 @@ HfCap.dll
 Thumbs.db
 *.tsbuildinfo
 npm-debug.log*
+tmp-push*.mjs

@@ -13,10 +13,8 @@ export const AUTO_SELECT_FAMILY = true;
 
 export const AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS = 500;
 
-/** Static A records when Windows getaddrinfo / local DNS are dead. Read at lookup time. */
-export const PINNED_A: Record<string, string> = {
-  "mtx-1.zala-soft.com": "78.85.7.132",
-};
+/** Static A records when OS getaddrinfo / local DNS are dead. Filled from HF_DNS_PIN. */
+export const PINNED_A: Record<string, string> = {};
 
 type UndiciMod = {
   Agent: new (opts: { connect?: { lookup?: typeof dns.lookup } }) => unknown;
@@ -35,6 +33,17 @@ function normalizeHost(hostname: string): string {
 
 function pinnedIp(hostname: string): string | undefined {
   return PINNED_A[normalizeHost(hostname)];
+}
+
+export function loadDnsPinsFromEnv(raw = process.env.HF_DNS_PIN || ""): void {
+  for (const part of String(raw).split(/[,;\s]+/)) {
+    if (!part) continue;
+    const eq = part.lastIndexOf("=");
+    if (eq < 1) continue;
+    const host = normalizeHost(part.slice(0, eq));
+    const ip = part.slice(eq + 1).trim();
+    if (host && net.isIP(ip) === 4) PINNED_A[host] = ip;
+  }
 }
 
 function loadUndici(): UndiciMod {
@@ -92,12 +101,10 @@ function installPinnedLookup(): void {
   } catch {
     dispatcher = undefined;
   }
-  console.error(
-    new Date().toISOString(),
-    "hf net pin",
-    "mtx-1.zala-soft.com",
-    PINNED_A["mtx-1.zala-soft.com"],
-  );
+  const pins = Object.entries(PINNED_A);
+  if (pins.length) {
+    console.error(new Date().toISOString(), "hf net pin", pins.map(([h, ip]) => `${h} ${ip}`).join(", "));
+  }
 }
 
 export async function pinnedFetch(input: any, init?: any): Promise<Response> {
@@ -122,7 +129,17 @@ export async function pinnedFetch(input: any, init?: any): Promise<Response> {
 export function pinHost(hostname: string, ip?: string): void {
   const key = normalizeHost(hostname);
   if (!key || net.isIP(key)) return;
-  PINNED_A[key] = ip || PINNED_A["mtx-1.zala-soft.com"];
+  if (ip && net.isIP(ip) === 4) {
+    PINNED_A[key] = ip;
+    return;
+  }
+  if (ip) return;
+  const hs = String(process.env.MATRIX_HOMESERVER_URL || "")
+    .replace(/^https?:\/\//i, "")
+    .split("/")[0]
+    .split(":")[0];
+  const fromHs = hs ? PINNED_A[normalizeHost(hs)] : undefined;
+  if (fromHs) PINNED_A[key] = fromHs;
 }
 
 export function applyNodeNetworkPolicy(): void {
@@ -131,5 +148,6 @@ export function applyNodeNetworkPolicy(): void {
   if (net.getDefaultAutoSelectFamilyAttemptTimeout() < AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS) {
     net.setDefaultAutoSelectFamilyAttemptTimeout(AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS);
   }
+  loadDnsPinsFromEnv();
   installPinnedLookup();
 }

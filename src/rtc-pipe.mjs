@@ -1,6 +1,6 @@
 import { RTCPeerConnection } from "werift";
-import { pinHost, pinnedFetch } from "./dist/network-policy.js";
-import { shouldRetryRtcOffer } from "./dist/rtc-retry.js";
+import { pinHost, pinnedFetch } from "../dist/network-policy.js";
+import { shouldRetryRtcOffer } from "../dist/rtc-retry.js";
 
 const MAGIC = Buffer.from("HFP1");
 const TYPE_PING = 1;

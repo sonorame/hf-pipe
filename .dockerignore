@@ -1,0 +1,15 @@
+.git
+.github
+node_modules
+dist
+compiled
+.data
+.env
+*.pid
+local
+secrets
+*.png
+*.jpg
+docs
+*.md
+!README.md

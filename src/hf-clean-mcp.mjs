@@ -13,20 +13,6 @@ function extractText(frame) {
   if (body.text) return String(body.text);
   if (body.saved) return String(body.saved);
   if (body.host) return [body.host, body.user, body.cwd].filter(Boolean).join(" | ");
-  if (body.op || body.cursor_x != null) {
-    return JSON.stringify({
-      ok: body.ok,
-      op: body.op,
-      x: body.x,
-      y: body.y,
-      cursor_x: body.cursor_x,
-      cursor_y: body.cursor_y,
-      width: body.width,
-      height: body.height,
-      left: body.left,
-      top: body.top,
-    });
-  }
   if (Array.isArray(body.names)) return body.names.join("\n");
   if (Array.isArray(body.lines)) return body.lines.join("\n");
   if (Array.isArray(body.hits)) {
@@ -44,7 +30,7 @@ async function rpcAsk(type, body, timeoutMs) {
   const task = { id: randomBytes(5).toString("hex"), type, body: body || {} };
   const st = await fetch(`${RPC}/status`).then((r) => r.json()).catch(() => ({ rtc: false }));
   if (!st.rtc) {
-    throw new Error("rtc down: dirty daemon not up or clean silent. Restart start-dirty.cmd and start-clean.cmd");
+    throw new Error("rtc down: dirty hop not up or clean silent. Restart both hops");
   }
   const res = await fetch(`${RPC}/ask`, {
     method: "POST",
@@ -83,13 +69,56 @@ function maybeImage(body) {
   return [{ type: "image", data: b64, mimeType: mime }];
 }
 
-const server = new McpServer({ name: "clean-pc", version: "1.0.0" }, { capabilities: { tools: {} } });
+const server = new McpServer(
+  { name: "clean-pc", version: "1.2.0" },
+  {
+    capabilities: { tools: {} },
+    instructions:
+      "Native Cursor Read/Grep/Shell see the operator disk only. Use these tools for the remote (clean) host.",
+  }
+);
+
+server.registerTool(
+  "clean_context",
+  {
+    title: "Remote host snapshot",
+    description: "Hostname, user, optional project root and helper script on the clean host.",
+    inputSchema: {},
+  },
+  async () => {
+    try {
+      return textResult(await rpcAsk("context", {}, 20000));
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
+
+server.registerTool(
+  "clean_lab",
+  {
+    title: "Remote helper script",
+    description: "Run HF_LAB_SCRIPT on the clean host. Requires HF_LAB_SCRIPT in the clean hop env.",
+    inputSchema: {
+      args: z.string().describe("Arguments after the helper script"),
+      timeout: z.number().int().optional().describe("Seconds, default 120"),
+    },
+  },
+  async ({ args, timeout }) => {
+    try {
+      const t = Number(timeout) || 120;
+      return textResult(await rpcAsk("lab", { args, timeout: t }, (t + 3) * 1000));
+    } catch (e) {
+      return fail(e);
+    }
+  }
+);
 
 server.registerTool(
   "clean_status",
   {
-    title: "Clean PC status",
-    description: "Check if the WebRTC tunnel to the clean PC is up.",
+    title: "Clean host status",
+    description: "Check if the WebRTC tunnel to the clean host is up.",
     inputSchema: {},
   },
   async () => {
@@ -105,11 +134,11 @@ server.registerTool(
 server.registerTool(
   "clean_shell",
   {
-    title: "Clean PC shell",
-    description: "Run a command on the clean PC (EDSIZHW0038), not in this Cursor workspace. Do not wait on GUI apps.",
+    title: "Clean host shell",
+    description: "Run a command on the clean host, not in this Cursor workspace. Do not wait on GUI apps.",
     inputSchema: {
       cmd: z.string().describe("Command line"),
-      cwd: z.string().optional().describe("Working directory on the clean PC"),
+      cwd: z.string().optional().describe("Working directory on the clean host"),
       timeout: z.number().int().optional().describe("Seconds, default 120"),
     },
   },
@@ -126,9 +155,9 @@ server.registerTool(
 server.registerTool(
   "clean_list",
   {
-    title: "Clean PC list dir",
-    description: "List a directory on the clean PC.",
-    inputSchema: { path: z.string().describe("Absolute path on the clean PC") },
+    title: "Clean host list dir",
+    description: "List a directory on the clean host.",
+    inputSchema: { path: z.string().describe("Absolute path on the clean host") },
   },
   async ({ path }) => {
     try {
@@ -142,8 +171,8 @@ server.registerTool(
 server.registerTool(
   "clean_tree",
   {
-    title: "Clean PC tree",
-    description: "Shallow directory tree on the clean PC.",
+    title: "Clean host tree",
+    description: "Shallow directory tree on the clean host.",
     inputSchema: {
       path: z.string(),
       depth: z.number().int().optional(),
@@ -161,8 +190,8 @@ server.registerTool(
 server.registerTool(
   "clean_read",
   {
-    title: "Clean PC read file",
-    description: "Read a file on the clean PC. Images come back as image content plus a local PNG path on the dirty side.",
+    title: "Clean host read file",
+    description: "Read a file on the clean host. Images come back as image content plus a local path on the operator.",
     inputSchema: { path: z.string() },
   },
   async ({ path }) => {
@@ -178,8 +207,8 @@ server.registerTool(
 server.registerTool(
   "clean_write",
   {
-    title: "Clean PC write file",
-    description: "Write a UTF-8 file on the clean PC.",
+    title: "Clean host write file",
+    description: "Write a UTF-8 file on the clean host.",
     inputSchema: {
       path: z.string(),
       content: z.string(),
@@ -197,8 +226,8 @@ server.registerTool(
 server.registerTool(
   "clean_glob",
   {
-    title: "Clean PC glob",
-    description: "Find files by name glob under a path on the clean PC.",
+    title: "Clean host glob",
+    description: "Find files by name glob under a path on the clean host.",
     inputSchema: {
       path: z.string(),
       pattern: z.string().optional(),
@@ -216,8 +245,8 @@ server.registerTool(
 server.registerTool(
   "clean_grep",
   {
-    title: "Clean PC grep",
-    description: "Search file contents on the clean PC.",
+    title: "Clean host grep",
+    description: "Search file contents on the clean host. Native Grep sees the operator disk only.",
     inputSchema: {
       path: z.string(),
       pattern: z.string(),
@@ -236,8 +265,8 @@ server.registerTool(
 server.registerTool(
   "clean_screenshot",
   {
-    title: "Clean PC screenshot",
-    description: "Capture the clean PC desktop and return a PNG (also saved under dirty local/shots). Includes virtual screen left/top/width/height for mouse mapping.",
+    title: "Clean host screenshot",
+    description: "Capture the clean host desktop and return a PNG (also saved under operator local/shots).",
     inputSchema: {
       fmt: z.enum(["png", "jpeg"]).optional(),
     },
@@ -246,68 +275,6 @@ server.registerTool(
     try {
       const frame = await rpcAsk("screenshot", fmt ? { fmt } : {}, 30000);
       return textResult(frame, maybeImage(frame.body || {}));
-    } catch (e) {
-      return fail(e);
-    }
-  }
-);
-
-server.registerTool(
-  "clean_mouse",
-  {
-    title: "Clean PC mouse",
-    description: "Move/click/scroll/drag on the clean PC. Coordinates are virtual-screen pixels (same as screenshot left/top/width/height).",
-    inputSchema: {
-      op: z.enum(["move", "click", "dblclick", "rightclick", "middleclick", "down", "up", "scroll", "drag"]).describe("Mouse action"),
-      x: z.number().describe("Virtual-screen X"),
-      y: z.number().describe("Virtual-screen Y"),
-      button: z.enum(["left", "right", "middle"]).optional(),
-      clicks: z.number().int().optional(),
-      dy: z.number().optional().describe("Wheel delta, 120 per notch, negative is down in Windows SendInput"),
-      dx: z.number().optional(),
-      toX: z.number().optional(),
-      toY: z.number().optional(),
-    },
-  },
-  async (args) => {
-    try {
-      return textResult(await rpcAsk("mouse", args, 8000));
-    } catch (e) {
-      return fail(e);
-    }
-  }
-);
-
-server.registerTool(
-  "clean_key",
-  {
-    title: "Clean PC key",
-    description: "Press a key chord on the clean PC, e.g. keys=[\"ctrl\",\"c\"] or keys=[\"enter\"].",
-    inputSchema: {
-      keys: z.array(z.string()).describe("Key names: ctrl, alt, shift, win, enter, tab, esc, letters, f1-f12, arrows"),
-    },
-  },
-  async ({ keys }) => {
-    try {
-      return textResult(await rpcAsk("key", { keys }, 8000));
-    } catch (e) {
-      return fail(e);
-    }
-  }
-);
-
-server.registerTool(
-  "clean_type",
-  {
-    title: "Clean PC type text",
-    description: "Type Unicode text on the clean PC (foreground window).",
-    inputSchema: {
-      text: z.string(),
-    },
-  },
-  async ({ text }) => {
-    try {
-      return textResult(await rpcAsk("type", { text }, 8000));
     } catch (e) {
       return fail(e);
     }

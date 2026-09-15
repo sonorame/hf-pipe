@@ -1,13 +1,12 @@
 @echo off
 chcp 65001 >nul
-cd /d "%~dp0"
-set "NODE=C:\Program Files\nodejs\node.exe"
-if not exist "%NODE%" (
-  echo No system node: %NODE%
+cd /d "%~dp0.."
+where node >nul 2>&1
+if errorlevel 1 (
+  echo node is not on PATH
   pause
   exit /b 1
 )
-echo NODE=%NODE%
-"%NODE%" "%~dp0diagnose.mjs"
+node src\diagnose.mjs
 echo.
 pause

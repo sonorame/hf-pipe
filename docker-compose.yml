@@ -1,0 +1,35 @@
+name: hf-pipe
+
+services:
+  hop:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      HF_RPC_BIND: "0.0.0.0"
+      HF_SECRETS_DIR: /data/secrets
+      MATRIX_DATA_DIR: /data/matrix
+      HF_LOCAL_DIR: /data/local
+    volumes:
+      - hf-pipe-data:/data
+    ports:
+      - "127.0.0.1:${HF_RPC_PORT:-18765}:18765"
+
+  login:
+    build: .
+    profiles: ["login"]
+    env_file:
+      - .env
+    environment:
+      HF_OPEN_BROWSER: "0"
+      HF_SECRETS_DIR: /data/secrets
+      MATRIX_DATA_DIR: /data/matrix
+    volumes:
+      - hf-pipe-data:/data
+    ports:
+      - "127.0.0.1:18767:18767"
+    command: ["node", "src/login.mjs"]
+
+volumes:
+  hf-pipe-data:

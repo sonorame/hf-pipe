@@ -5,14 +5,14 @@ import { pinnedFetch } from "../src/network-policy.js";
 
 test("SDK client options use pinnedFetch so Matrix HTTP bypasses dead getaddrinfo", () => {
   const opts = createMatrixSdkClientOptions({
-    baseUrl: "https://mtx-1.zala-soft.com",
-    userId: "@kirill:mtx-1.zala-soft.com",
+    baseUrl: "https://matrix.example.com",
+    userId: "@user:matrix.example.com",
     deviceId: "DEVICE1",
     cryptoCallbacks: {},
   });
 
-  assert.equal(opts.baseUrl, "https://mtx-1.zala-soft.com");
-  assert.equal(opts.userId, "@kirill:mtx-1.zala-soft.com");
+  assert.equal(opts.baseUrl, "https://matrix.example.com");
+  assert.equal(opts.userId, "@user:matrix.example.com");
   assert.equal(opts.deviceId, "DEVICE1");
   assert.equal(typeof opts.fetchFn, "function");
   assert.equal(opts.fetchFn, pinnedFetch);

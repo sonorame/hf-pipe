@@ -12,6 +12,12 @@ import { fileURLToPath } from "url";
 import os from "os";
 import { execFileSync, execSync } from "child_process";
 import { LIVE_QUALITY, LIVE_MAXW, normalizeScreens } from "./view-shot.mjs";
+import { isDroppedInputJob } from "./hop-surface.mjs";
+import {
+  buildCleanContextSnapshot,
+  buildLabCommand,
+  defaultShellCwd,
+} from "./clean-context.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MAX_OUT = 400_000;
@@ -85,7 +91,7 @@ function opPing() {
 function opShell(body) {
   try {
     const stdout = execSync(String(body.cmd || ""), {
-      cwd: body.cwd || undefined,
+      cwd: defaultShellCwd(body.cwd),
       timeout: (Number(body.timeout) || 120) * 1000,
       encoding: "utf8",
       windowsHide: true,
@@ -393,43 +399,18 @@ async function opScreenshot(body = {}) {
   }
 }
 
-function opInput(body) {
-  const spec = { ...body };
-  if (!spec.op) spec.op = spec.action || "click";
-  const jsonPath = join(os.tmpdir(), `hf-in-${Date.now()}.json`);
-  const ps1 = join(HERE, "input.ps1");
-  if (!existsSync(ps1)) return { ok: false, error: "input.ps1 missing" };
-  writeFileSync(jsonPath, JSON.stringify(spec), "utf8");
-  try {
-    const stdout = execFileSync(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1, jsonPath],
-      { timeout: 15000, windowsHide: true, encoding: "utf8" }
-    );
-    const line = String(stdout || "").trim().split(/\r?\n/).pop() || "{}";
-    let parsed = {};
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      parsed = { raw: line };
-    }
-    return { ok: true, ...parsed };
-  } catch (e) {
-    return { ok: false, error: String(e.stderr || e.message || e).slice(-2000) };
-  } finally {
-    try {
-      unlinkSync(jsonPath);
-    } catch {
-      // ignore
-    }
-  }
-}
-
 export async function runCleanJob(frame) {
   const t = String(frame.type || "ping").toLowerCase();
   const body = bodyOf(frame);
   try {
+    if (isDroppedInputJob(t)) return { ok: false, error: `no handler for ${t}` };
     if (t === "ping") return opPing();
+    if (t === "context") return buildCleanContextSnapshot();
+    if (t === "lab") {
+      const spec = buildLabCommand(body.args || body.cmd);
+      if (!spec.ok) return spec;
+      return opShell({ cmd: spec.cmd, cwd: spec.cwd, timeout: body.timeout });
+    }
     if (t === "shell") return opShell(body);
     if (t === "list") return opList(body);
     if (t === "tree") return opTree(body);
@@ -439,14 +420,6 @@ export async function runCleanJob(frame) {
     if (t === "write") return opWrite(body);
     if (t === "pull") return opRead({ ...body, blob: true });
     if (t === "screenshot") return await opScreenshot(body);
-    if (t === "mouse" || t === "pointer" || t === "click") {
-      return opInput({ ...body, op: body.op || body.action || (t === "click" ? "click" : "move") });
-    }
-    if (t === "key" || t === "keyboard" || t === "type" || t === "hotkey") {
-      const op = t === "type" || body.text ? "type" : "key";
-      return opInput({ ...body, op: body.op || body.action || op });
-    }
-    if (t === "input") return opInput(body);
     return { ok: false, error: `no handler for ${t}` };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };

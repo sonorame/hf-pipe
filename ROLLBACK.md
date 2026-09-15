@@ -1,27 +1,28 @@
-# Откат
+# Rollback
 
-Тег `working-baseline-2026-09-15` - снимок hop после ребута чистой, когда DNS/Matrix снова отвечали. Секреты и `node.exe` в git нет.
+Git tags are snapshots of this repository. Secrets and `node.exe` are not in git.
 
-## Откатить исходники
+## Restore sources
 
 ```text
-cd C:\Users\Malykh_Kirill\Desktop\projects\hf-pipe
-git fetch
+git fetch --tags
 git checkout working-baseline-2026-09-15
 ```
 
-Дальше скопировать файлы из `src/` в рантайм:
+Install and start from the clone:
 
-- грязная: `C:\Users\Malykh_Kirill\.cursor\matrix-mcp-e2ee\`
-- чистая: `C:\Users\Kirill\Desktop\hf-matrix-pack\`
-- клиент: `C:\Users\Malykh_Kirill\bin\hotfolder\dirty.py` и `pipe.py`
+```text
+npm install
+npm start -- clean
+npm start -- dirty
+```
 
-`compiled\network-policy.js` -> `dist\network-policy.js` на обеих машинах. Процесс node перезапустить (`start-clean.cmd` / `start-dirty.cmd`). `boot retry` модуль не перечитывает.
+`boot retry` does not reload Node modules. Restart the process after a checkout.
 
-Вернуться на голову:
+Return to the branch head:
 
 ```text
 git checkout main
 ```
 
-Не откатывать `matrix-session.json` из git: его там нет.
+Do not restore `matrix-session.json` from git: it is not there.

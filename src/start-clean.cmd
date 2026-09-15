@@ -1,40 +1,24 @@
 @echo off
 chcp 65001 >nul
 setlocal
-set "PACK=%USERPROFILE%\Desktop\hf-matrix-pack"
-if exist "%~dp0node.exe" set "PACK=%~dp0"
-if exist "%~dp0dist\matrix\client.js" set "PACK=%~dp0"
-set "HOME=%USERPROFILE%\.cursor\matrix-mcp-e2ee"
-if exist "%PACK%\index.mjs" set "HOME=%PACK%"
-if exist "C:\Program Files\nodejs\node.exe" (
-  set "NODE=C:\Program Files\nodejs\node.exe"
-) else if exist "%~dp0node.exe" (
-  set "NODE=%~dp0node.exe"
-) else if exist "%PACK%\node.exe" (
-  set "NODE=%PACK%\node.exe"
-) else (
-  set "NODE=node.exe"
-)
-if not exist "%HOME%\index.mjs" set "HOME=%PACK%"
-if not exist "%HOME%\dist" if exist "%PACK%\dist" mklink /J "%HOME%\dist" "%PACK%\dist" >nul 2>&1
-if not exist "%HOME%\node_modules" if exist "%PACK%\node_modules" mklink /J "%HOME%\node_modules" "%PACK%\node_modules" >nul 2>&1
-cd /d "%HOME%"
-echo.
+cd /d "%~dp0.."
 echo Leave this window open.
 echo If Element asks to confirm device hf-matrix - confirm it.
 echo.
-if not exist "%USERPROFILE%\.cursor\secrets\matrix-session.json" (
+set HF_SIDE=clean
+if not defined HF_TEMP_KEEP_MS set HF_TEMP_KEEP_MS=0
+if not defined HF_TEMP_SWEEP_MS set HF_TEMP_SWEEP_MS=30000
+if not exist "%USERPROFILE%\.hf-pipe\secrets\matrix-session.json" if not exist "%USERPROFILE%\.cursor\secrets\matrix-session.json" (
   echo No daemon session yet. Confirm the device, then this window continues by itself.
-  "%NODE%" "%HOME%\login.mjs"
+  node src\login.mjs
   if errorlevel 1 (
-    echo Login failed. If Element still cannot connect, wait for mtx-1 and run start-clean.cmd again.
+    echo Login failed. Fix MATRIX_HOMESERVER_URL and run again.
     pause
     exit /b 1
   )
 )
-set HF_SIDE=clean
 :loop
-"%NODE%" "%HOME%\index.mjs" clean
+node src\index.mjs clean
 echo node exited %ERRORLEVEL% - restart in 4s
 ping 127.0.0.1 -n 5 >nul
 goto loop

@@ -12,25 +12,8 @@ SEQ_WIDTH = 8
 MAX_INLINE = 80_000
 MAX_JSON = 400_000
 
-DIRTY_CANDS = [
-    Path(r"\\edsizhfs0001\Share13\malykh_kirill\folderhot"),
-    Path(r"\\edsizhfs0001\Share13\malykh_kirill\folerhot"),
-    Path(r"Z:\malykh_kirill\folderhot"),
-    Path(r"Z:\malykh_kirill\folerhot"),
-    Path(r"\\edsizhfs0004.five.loc\malykh_kirill\folderhot"),
-    Path(r"\\edsizhfs0004.five.loc\malykh_kirill\folerhot"),
-    Path(r"Z:\cursor-hot"),
-]
-
-CLEAN_CANDS = [
-    Path(r"Z:\malykh_kirill\folderhot"),
-    Path(r"\\edsizhfs0004.five.loc\malykh_kirill\folderhot"),
-    Path(r"\\edsizhfs0001\Share13\malykh_kirill\folderhot"),
-    Path(r"\\edsizhfs0001\Share13\malykh_kirill\folerhot"),
-    Path(r"\\edsizhfs0004.five.loc\malykh_kirill\folerhot"),
-    Path(r"Z:\malykh_kirill\folerhot"),
-    Path(r"Z:\cursor-hot"),
-]
+DIRTY_CANDS: list[Path] = []
+CLEAN_CANDS: list[Path] = []
 
 
 def configure_stdio() -> None:

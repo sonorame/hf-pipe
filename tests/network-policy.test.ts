@@ -7,7 +7,22 @@ import {
   PINNED_A,
   pinnedFetch,
   pinHost,
+  loadDnsPinsFromEnv,
 } from "../src/network-policy.js";
+
+test("DNS pins come from HF_DNS_PIN, not a baked-in lab host", () => {
+  assert.equal(Object.prototype.hasOwnProperty.call(PINNED_A, "mtx-1.zala-soft.com"), false);
+  const prev = process.env.HF_DNS_PIN;
+  process.env.HF_DNS_PIN = "pin.example=10.1.2.3";
+  try {
+    loadDnsPinsFromEnv();
+    assert.equal(PINNED_A["pin.example"], "10.1.2.3");
+  } finally {
+    delete PINNED_A["pin.example"];
+    if (prev == null) delete process.env.HF_DNS_PIN;
+    else process.env.HF_DNS_PIN = prev;
+  }
+});
 
 test("process policy prefers IPv4 lookup order and keeps Happy Eyeballs", () => {
   const prevOrder = dns.getDefaultResultOrder();

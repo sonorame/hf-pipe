@@ -1,10 +1,11 @@
 import dns from "node:dns";
 import dnsPromises from "node:dns/promises";
 import net from "node:net";
-import { applyNodeNetworkPolicy } from "./dist/network-policy.js";
+import { loadEnvFile, homeserverUrl } from "./config.mjs";
+import { applyNodeNetworkPolicy } from "../dist/network-policy.js";
 
-const HOST = "mtx-1.zala-soft.com";
-const URL = `https://${HOST}/_matrix/client/versions`;
+loadEnvFile();
+applyNodeNetworkPolicy();
 
 function dumpErr(label, err) {
   const rows = [];
@@ -29,8 +30,15 @@ function dumpErr(label, err) {
 }
 
 async function main() {
-  applyNodeNetworkPolicy();
+  const hs = homeserverUrl();
+  if (!hs) {
+    console.error("Set MATRIX_HOMESERVER_URL");
+    process.exit(1);
+  }
+  const host = hs.replace(/^https?:\/\//i, "").split("/")[0].split(":")[0];
+  const url = `${hs}/_matrix/client/versions`;
   console.log("node", process.version, process.execPath);
+  console.log("homeserver", hs);
   console.log("dnsOrder", dns.getDefaultResultOrder());
   console.log("autoFamily", net.getDefaultAutoSelectFamily());
   console.log("autoFamilyTimeout", net.getDefaultAutoSelectFamilyAttemptTimeout());
@@ -39,33 +47,33 @@ async function main() {
   console.log("NODE_OPTIONS", process.env.NODE_OPTIONS || "");
 
   try {
-    const looked = await dnsPromises.lookup(HOST, { all: true });
+    const looked = await dnsPromises.lookup(host, { all: true });
     console.log("lookup", looked);
   } catch (e) {
     dumpErr("lookup FAIL", e);
   }
 
   try {
-    console.log("resolve4", await dnsPromises.resolve4(HOST));
+    console.log("resolve4", await dnsPromises.resolve4(host));
   } catch (e) {
     dumpErr("resolve4 FAIL", e);
   }
 
   try {
-    console.log("resolve6", await dnsPromises.resolve6(HOST));
+    console.log("resolve6", await dnsPromises.resolve6(host));
   } catch (e) {
     dumpErr("resolve6 FAIL", e);
   }
 
   try {
-    const res = await fetch(URL);
+    const res = await fetch(url);
     console.log("fetch plain", res.status);
   } catch (e) {
     dumpErr("fetch plain FAIL", e);
   }
 
   try {
-    const res = await fetch(URL, {
+    const res = await fetch(url, {
       method: "GET",
       mode: "cors",
       redirect: "follow",

@@ -1,16 +1,12 @@
-# Dirty-side hotfolder client.
+# Operator-side CLI.
 #
-# Matrix (default for Cursor):
-#   set HOT_TRANSPORT=matrix
-#   python dirty.py ask hostname          send + wait + print (target ~5s)
+#   python dirty.py ask hostname
 #   python dirty.py ask shell whoami
-#   python dirty.py ask --timeout 12 shell dir C:\Users\Kirill\Desktop
+#   python dirty.py ask --timeout 12 shell dir .
 #
-# Fire-and-forget still available:
+# Fire-and-forget:
 #   python dirty.py send ping
 #   python dirty.py get <id>
-#
-# Share/DFS path still works if HOT_TRANSPORT is unset and dirty daemon is up.
 
 from __future__ import annotations
 
@@ -47,16 +43,22 @@ def daemon_alive() -> bool:
         return False
     if pid == os.getpid():
         return True
-    try:
-        import ctypes
+    if os.name == "nt":
+        try:
+            import ctypes
 
-        SYNCHRONIZE = 0x00100000
-        handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
-        if handle:
-            ctypes.windll.kernel32.CloseHandle(handle)
-            return True
-        return False
-    except Exception:
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            return False
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
         return False
 
 
@@ -123,30 +125,6 @@ def parse_send(argv: list[str]) -> dict:
         task["body"] = {}
         if fmt:
             task["body"]["fmt"] = fmt
-    elif kind in ("mouse", "pointer", "click", "input"):
-        op = take_flag("op") or take_flag("action") or ("click" if kind == "click" else "move")
-        btn = take_flag("button")
-        dy = take_flag("dy")
-        dx = take_flag("dx")
-        body = {"op": op}
-        if rest:
-            body["x"] = float(rest[0])
-        if len(rest) > 1:
-            body["y"] = float(rest[1])
-        if btn:
-            body["button"] = btn
-        if dy is not None:
-            body["dy"] = float(dy)
-        if dx is not None:
-            body["dx"] = float(dx)
-        task["type"] = "mouse"
-        task["body"] = body
-    elif kind in ("key", "keyboard", "hotkey"):
-        task["type"] = "key"
-        task["body"] = {"keys": rest}
-    elif kind == "type":
-        task["type"] = "type"
-        task["body"] = {"text": " ".join(rest)}
     elif kind in ("batch", "playbook"):
         if not rest:
             raise SystemExit(f"{kind} needs a json file or inline json")
@@ -313,6 +291,10 @@ def cmd_ask(argv: list[str]) -> int:
             ms = int((time.perf_counter() - t0) * 1000)
             print(_extract_stdout(frame))
             print(f"# ok id={tid} {ms}ms", flush=True)
+            try:
+                out.unlink()
+            except OSError:
+                pass
             return 0 if frame.get("ok", True) else 1
         time.sleep(0.2)
     print(f"TIMEOUT {timeout}s id={tid} (clean silent? restart start-clean.cmd)", flush=True)
@@ -380,6 +362,11 @@ def cmd_get(argv: list[str]) -> int:
         print("NOT_YET", path)
         return 1
     print(path.read_text(encoding="utf-8", errors="replace"))
+    if argv:
+        try:
+            path.unlink()
+        except OSError:
+            pass
     return 0
 
 
@@ -491,7 +478,7 @@ def main(argv: list[str]) -> int:
         return cmd_get(argv[2:])
     if cmd in ("daemon", "watch"):
         return cmd_daemon()
-    if cmd in ("ping", "shell", "tree", "list", "read", "write", "pull", "glob", "grep", "screenshot", "batch", "playbook", "mouse", "click", "key", "type"):
+    if cmd in ("ping", "shell", "tree", "list", "read", "write", "pull", "glob", "grep", "screenshot", "batch", "playbook"):
         return cmd_ask(argv[1:])
     print("unknown", cmd)
     return 2
