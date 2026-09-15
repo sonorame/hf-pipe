@@ -9,6 +9,7 @@ matrix-session.json
 .env.*
 !.env.example
 node.exe
+HfCap.dll
 .data/
 .mcp_cache/
 .DS_Store

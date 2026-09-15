@@ -1,5 +1,25 @@
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+$here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$dll = Join-Path $here "HfCap.dll"
+$code = @"
+using System;
+using System.Runtime.InteropServices;
+public static class HfCap {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+  [DllImport("gdi32.dll")] public static extern bool StretchBlt(IntPtr hdcDest, int xDest, int yDest, int wDest, int hDest, IntPtr hdcSrc, int xSrc, int ySrc, int wSrc, int hSrc, int rop);
+  [DllImport("gdi32.dll")] public static extern int SetStretchBltMode(IntPtr hdc, int mode);
+}
+"@
+if (Test-Path $dll) {
+  Add-Type -Path $dll
+} else {
+  Add-Type -TypeDefinition $code -OutputAssembly $dll -OutputType Library
+  Add-Type -Path $dll
+}
+[void][HfCap]::SetProcessDPIAware()
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 while ($true) {
   $line = [Console]::In.ReadLine()
@@ -22,23 +42,22 @@ while ($true) {
       $scr = $screens[$display]
     }
     $b = $scr.Bounds
-    $bmp = New-Object System.Drawing.Bitmap ([int]$b.Width), ([int]$b.Height)
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.CopyFromScreen([int]$b.X, [int]$b.Y, 0, 0, $bmp.Size)
-    $g.Dispose()
+    $nw = [int]$b.Width
+    $nh = [int]$b.Height
     if ($maxw -gt 0 -and $b.Width -gt $maxw) {
       $nw = [int]$maxw
       $nh = [Math]::Max(1, [int]($b.Height * $maxw / $b.Width))
-      $small = New-Object System.Drawing.Bitmap $nw, $nh
-      $gs = [System.Drawing.Graphics]::FromImage($small)
-      $gs.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::Low
-      $gs.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighSpeed
-      $gs.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighSpeed
-      $gs.DrawImage($bmp, 0, 0, $nw, $nh)
-      $gs.Dispose()
-      $bmp.Dispose()
-      $bmp = $small
     }
+    $bmp = New-Object System.Drawing.Bitmap $nw, $nh
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $hdcDest = $g.GetHdc()
+    $hdcSrc = [HfCap]::GetDC([IntPtr]::Zero)
+    [void][HfCap]::SetStretchBltMode($hdcDest, 3)
+    $okBlit = [HfCap]::StretchBlt($hdcDest, 0, 0, $nw, $nh, $hdcSrc, [int]$b.X, [int]$b.Y, [int]$b.Width, [int]$b.Height, 13369376)
+    [void][HfCap]::ReleaseDC([IntPtr]::Zero, $hdcSrc)
+    $g.ReleaseHdc($hdcDest)
+    $g.Dispose()
+    if (-not $okBlit) { throw "StretchBlt failed" }
     $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq "image/jpeg" }
     $ep = New-Object System.Drawing.Imaging.EncoderParameters(1)
     $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality, [long]$quality)
@@ -46,17 +65,17 @@ while ($true) {
     if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
     $bmp.Save($out, $codec, $ep)
     $bmp.Dispose()
-    $list = New-Object System.Collections.Generic.List[object]
+    $arr = @()
     for ($i = 0; $i -lt $screens.Count; $i++) {
       $sb = $screens[$i].Bounds
-      $list.Add(@{
+      $arr += @{
         i = $i
         x = [int]$sb.X
         y = [int]$sb.Y
         width = [int]$sb.Width
         height = [int]$sb.Height
         primary = [bool]$screens[$i].Primary
-      }) | Out-Null
+      }
     }
     $meta = @{
       ok = $true
@@ -64,7 +83,7 @@ while ($true) {
       top = [int]$b.Y
       width = [int]$b.Width
       height = [int]$b.Height
-      screens = $list
+      screens = @($arr)
     } | ConvertTo-Json -Compress -Depth 6
     [Console]::Out.WriteLine($meta)
     [Console]::Out.Flush()

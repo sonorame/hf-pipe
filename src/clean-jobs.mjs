@@ -10,9 +10,8 @@ import {
 import { basename, dirname, extname, join } from "path";
 import { fileURLToPath } from "url";
 import os from "os";
-import { execFileSync, execSync, spawn } from "child_process";
-import { createInterface } from "readline";
-import { LIVE_QUALITY, LIVE_MAXW } from "./view-shot.mjs";
+import { execFileSync, execSync } from "child_process";
+import { LIVE_QUALITY, LIVE_MAXW, normalizeScreens } from "./view-shot.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MAX_OUT = 400_000;
@@ -248,78 +247,27 @@ function opWrite(body) {
   return { ok: true, path: p, bytes: buf.length };
 }
 
-let captureProc = null;
-let captureLineWait = null;
-
-function stopCaptureDaemon() {
-  if (!captureProc) return;
-  try {
-    captureProc.stdin.end();
-  } catch {
-    // ignore
-  }
-  try {
-    captureProc.kill();
-  } catch {
-    // ignore
-  }
-  captureProc = null;
-  captureLineWait = null;
-}
-
-function ensureCaptureDaemon() {
-  if (captureProc && captureProc.exitCode == null) return captureProc;
-  const ps1 = join(HERE, "capture-loop.ps1");
-  const child = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1],
-    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] },
-  );
-  const rl = createInterface({ input: child.stdout });
-  rl.on("line", (line) => {
-    const wait = captureLineWait;
-    captureLineWait = null;
-    if (!wait) return;
-    try {
-      wait.resolve(JSON.parse(line));
-    } catch (e) {
-      wait.reject(e);
-    }
-  });
-  child.on("exit", () => {
-    if (captureProc === child) captureProc = null;
-    const wait = captureLineWait;
-    captureLineWait = null;
-    if (wait) wait.reject(new Error("capture exit"));
-  });
-  captureProc = child;
-  return child;
-}
-
 function captureOnce(req, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const child = ensureCaptureDaemon();
-    if (captureLineWait) {
-      reject(new Error("capture busy"));
-      return;
+  const ps1 = join(HERE, "capture-loop.ps1");
+  const stdout = execFileSync(
+    "powershell.exe",
+    ["-STA", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1],
+    {
+      input: JSON.stringify(req) + "\n",
+      timeout: timeoutMs,
+      windowsHide: true,
+      encoding: "utf8",
+      maxBuffer: MAX_OUT,
     }
-    const timer = setTimeout(() => {
-      captureLineWait = null;
-      stopCaptureDaemon();
-      reject(new Error("capture timeout"));
-    }, timeoutMs);
-    captureLineWait = {
-      resolve: (v) => {
-        clearTimeout(timer);
-        resolve(v);
-      },
-      reject: (e) => {
-        clearTimeout(timer);
-        reject(e);
-      },
-    };
-    child.stdin.write(`${JSON.stringify(req)}\n`);
-  });
+  );
+  const line = String(stdout || "")
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .split(/\r?\n/)
+    .filter((l) => l.startsWith("{"))
+    .pop();
+  if (!line) throw new Error("capture empty");
+  return JSON.parse(line);
 }
 
 async function opScreenshot(body = {}) {
@@ -345,7 +293,7 @@ async function opScreenshot(body = {}) {
 
   if (jpeg) {
     try {
-      const geom = await captureOnce({ display, maxw, quality, out }, 2500);
+      const geom = captureOnce({ display, maxw, quality, out }, 20000);
       if (!geom?.ok) return { ok: false, error: geom?.error || "capture failed" };
       const data = readFileSync(out);
       if (data.length > MAX_BLOB) return { ok: false, error: `shot too big ${data.length}` };
@@ -358,11 +306,11 @@ async function opScreenshot(body = {}) {
         top: geom.top ?? 0,
         width: geom.width,
         height: geom.height,
-        screens: geom.screens || [],
+        screens: normalizeScreens(geom.screens),
         display,
       };
     } catch {
-      stopCaptureDaemon();
+      // one-shot fallback below
     } finally {
       try {
         unlinkSync(out);
@@ -374,6 +322,8 @@ async function opScreenshot(body = {}) {
 
   const script = [
     "Add-Type -AssemblyName System.Windows.Forms,System.Drawing",
+    "Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class HfDpi { [DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware(); }'",
+    "[void][HfDpi]::SetProcessDPIAware()",
     `$display = ${display}`,
     `$maxw = ${maxw}`,
     "$screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y })",
@@ -425,7 +375,7 @@ async function opScreenshot(body = {}) {
       top: geom.top ?? 0,
       width: geom.width,
       height: geom.height,
-      screens: geom.screens || [],
+      screens: normalizeScreens(geom.screens),
       display,
       cursor_x: geom.cursor_x,
       cursor_y: geom.cursor_y,

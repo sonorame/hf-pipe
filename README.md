@@ -48,4 +48,6 @@ py -3.12 C:\Users\Malykh_Kirill\bin\hotfolder\dirty.py ask mouse --op move 400 3
 
 ## GitHub
 
-Репозиторий пока локальный. Когда будешь готов: private repo, без `node_modules`, без `*.pid`, без `secrets`, без скринов. Этот каталог `projects/hf-pipe` - описание и манифест; рантайм живет в путях таблицы выше.
+Приватный репозиторий: https://github.com/sonorame/hf-pipe
+
+Не коммитить: `node_modules`, `*.pid`, `secrets`, скрины, `node.exe`, `HfCap.dll`. Этот каталог `projects/hf-pipe` - описание и манифест; рантайм живет в путях таблицы выше. Откат: `ROLLBACK.md`, тег `working-baseline-2026-09-15`.
