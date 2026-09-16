@@ -37,10 +37,16 @@ test("daemon recycles after hibernate clock jump", () => {
   assert.equal(indexSrc.includes("shouldRecycleAfterClockJump"), true);
 });
 
-test("RTC retry does not wait connecting forever", () => {
+test("RTC session follows one outstanding offer and gen owner", () => {
   const rtcSrc = readFileSync(join(here, "../src/rtc-pipe.mjs"), "utf8");
   assert.equal(rtcSrc.includes("shouldRetryRtcOffer"), true);
-  assert.equal(rtcSrc.includes("shouldReplaceRtcPeer"), true);
+  assert.equal(rtcSrc.includes("shouldAcceptRemoteOffer"), true);
+  assert.equal(rtcSrc.includes("localSdpReadyToSignal"), true);
+  assert.equal(rtcSrc.includes("offerCreateInFlight"), true);
+  assert.equal(rtcSrc.includes("outstandingOffer"), true);
+  assert.equal(rtcSrc.includes("rtc drop gen"), true);
+  assert.equal(/await pc\.setLocalDescription/.test(rtcSrc), false);
+  assert.equal(rtcSrc.includes("pc.setLocalDescription"), true);
 });
 
 test("dirty start loop does not use timeout /t", () => {

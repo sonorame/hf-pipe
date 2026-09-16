@@ -1,6 +1,10 @@
 import { RTCPeerConnection } from "werift";
 import { pinHost, pinnedFetch } from "../dist/network-policy.js";
-import { shouldRetryRtcOffer, shouldReplaceRtcPeer } from "../dist/rtc-retry.js";
+import {
+  shouldRetryRtcOffer,
+  shouldAcceptRemoteOffer,
+  localSdpReadyToSignal,
+} from "../dist/rtc-retry.js";
 import { formatErrorChain } from "../dist/error-chain.js";
 
 const MAGIC = Buffer.from("HFP1");
@@ -20,6 +24,8 @@ let pendingIce = [];
 let dcOpen = false;
 let lastOfferAt = 0;
 let sessionGen = 0;
+let offerCreateInFlight = false;
+let outstandingOffer = false;
 let making = Promise.resolve();
 let onRpc = null;
 const waiters = new Map();
@@ -123,7 +129,22 @@ function descType(t) {
 }
 
 function emit(frame) {
-  return sendSignal({ ...frame, gen: sessionGen });
+  return sendSignal({ ...frame, gen: frame.gen ?? sessionGen });
+}
+
+async function signalCreatedDescription(desc, sdpType) {
+  const sld = pc.setLocalDescription(desc);
+  sld.catch((e) => log("rtc sld", formatErrorChain(e)));
+  const sdp = desc?.sdp || pc.localDescription?.sdp;
+  if (!localSdpReadyToSignal({ alreadySignaled: false, sdp })) {
+    throw new Error("local sdp empty");
+  }
+  await emit({
+    id: uid(),
+    type: "sdp",
+    sdpType,
+    sdp,
+  });
 }
 
 function attachDc(channel, role) {
@@ -131,6 +152,7 @@ function attachDc(channel, role) {
   const onOpen = () => {
     if (dcOpen) return;
     dcOpen = true;
+    outstandingOffer = false;
     log("rtc up", role, "state", dc.readyState);
   };
   dc.onopen = onOpen;
@@ -296,7 +318,10 @@ async function sendChunked(type, id, payload) {
 }
 
 function wirePc() {
+  const boundPc = pc;
+  const boundGen = sessionGen;
   pc.onicecandidate = (ev) => {
+    if (pc !== boundPc) return;
     const cand = ev?.candidate;
     if (!cand) return;
     const line = cand.candidate || "";
@@ -309,18 +334,25 @@ function wirePc() {
       candidate: line,
       mid: cand.sdpMid || "0",
       sdpMLineIndex: cand.sdpMLineIndex ?? 0,
+      gen: boundGen,
     }).catch((e) => log("rtc sig ice", formatErrorChain(e)));
   };
-  pc.onicegatheringstatechange = () => log("rtc gather", pc.iceGatheringState);
+  pc.onicegatheringstatechange = () => {
+    if (pc !== boundPc) return;
+    log("rtc gather", boundPc.iceGatheringState);
+  };
   pc.onconnectionstatechange = () => {
-    log("rtc state", pc.connectionState);
-    if (["failed", "closed", "disconnected"].includes(pc.connectionState)) dcOpen = false;
+    if (pc !== boundPc) return;
+    log("rtc state", boundPc.connectionState);
+    if (["failed", "closed", "disconnected"].includes(boundPc.connectionState)) dcOpen = false;
   };
   pc.oniceconnectionstatechange = () => {
-    log("rtc ice", pc.iceConnectionState);
-    if (["failed", "closed", "disconnected"].includes(pc.iceConnectionState)) dcOpen = false;
+    if (pc !== boundPc) return;
+    log("rtc ice", boundPc.iceConnectionState);
+    if (["failed", "closed", "disconnected"].includes(boundPc.iceConnectionState)) dcOpen = false;
   };
   pc.ondatachannel = (ev) => {
+    if (pc !== boundPc) return;
     log("rtc incoming dc", ev?.channel?.label);
     if (ev?.channel) attachDc(ev.channel, "answerer");
   };
@@ -335,20 +367,21 @@ async function makePc() {
 }
 
 async function startOfferer() {
+  if (offerCreateInFlight) return;
+  offerCreateInFlight = true;
+  outstandingOffer = true;
+  lastOfferAt = Date.now();
   sessionGen += 1;
   pendingIce = pendingIce.filter((c) => c.gen === sessionGen);
-  await makePc();
-  attachDc(pc.createDataChannel("hf"), "offerer");
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  await emit({
-    id: uid(),
-    type: "sdp",
-    sdpType: "offer",
-    sdp: pc.localDescription.sdp,
-  });
-  lastOfferAt = Date.now();
-  log("rtc offerer", "gen", sessionGen, "sdp", Buffer.byteLength(pc.localDescription.sdp));
+  try {
+    await makePc();
+    attachDc(pc.createDataChannel("hf"), "offerer");
+    const offer = await pc.createOffer();
+    await signalCreatedDescription(offer, "offer");
+    log("rtc offerer", "gen", sessionGen, "sdp", Buffer.byteLength(offer.sdp || pc.localDescription.sdp));
+  } finally {
+    offerCreateInFlight = false;
+  }
 }
 
 function sendKeepalive() {
@@ -379,6 +412,9 @@ export async function startRtc(opts) {
           dcReadyState: dc?.readyState,
           connectionState: pc?.connectionState,
           iceConnectionState: pc?.iceConnectionState,
+          signalingState: pc?.signalingState,
+          outstandingOffer,
+          offerCreateInFlight,
           lastOfferAt,
           now: Date.now(),
         })
@@ -395,14 +431,13 @@ export async function startRtc(opts) {
 
 async function applyOffer(frame) {
   if (
-    pc &&
-    !shouldReplaceRtcPeer({
+    !shouldAcceptRemoteOffer({
       dcOpen,
-      connectionState: pc.connectionState,
-      iceConnectionState: pc.iceConnectionState,
+      localGen: sessionGen,
+      remoteGen: frame.gen,
     })
   ) {
-    log("rtc keep peer drop offer", "gen", frame.gen);
+    log("rtc drop gen", "offer", frame.gen, "have", sessionGen);
     return;
   }
   if (frame.gen != null) sessionGen = frame.gen;
@@ -412,18 +447,15 @@ async function applyOffer(frame) {
   remoteDescSet = true;
   await flushIce();
   const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  await emit({
-    id: uid(),
-    type: "sdp",
-    sdpType: "answer",
-    sdp: pc.localDescription.sdp,
-  });
+  await signalCreatedDescription(answer, "answer");
   log("rtc got offer", "gen", sessionGen);
 }
 
 async function applyAnswer(frame) {
-  if (frame.gen != null && frame.gen !== sessionGen) return;
+  if (frame.gen != null && frame.gen !== sessionGen) {
+    log("rtc drop gen", "answer", frame.gen, "have", sessionGen);
+    return;
+  }
   if (!pc) return;
   await pc.setRemoteDescription({ type: "answer", sdp: frame.sdp });
   remoteDescSet = true;
@@ -433,7 +465,10 @@ async function applyAnswer(frame) {
 
 async function applyIce(frame) {
   const gen = frame.gen;
-  if (gen != null && sessionGen && gen !== sessionGen) return;
+  if (gen != null && sessionGen && gen !== sessionGen) {
+    log("rtc drop gen", "ice", gen, "have", sessionGen);
+    return;
+  }
   const cand = {
     candidate: frame.candidate,
     mid: frame.mid || "0",

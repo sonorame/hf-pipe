@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { shouldRetryRtcOffer, shouldReplaceRtcPeer } from "../src/rtc-retry.js";
+import { shouldRetryRtcOffer, shouldReplaceRtcPeer, shouldAcceptRemoteOffer, localSdpReadyToSignal } from "../src/rtc-retry.js";
 
 test("open datachannel does not retry", () => {
   assert.equal(
@@ -86,6 +86,34 @@ test("failed ICE still waits out a slow Matrix answer after a 21s TURN hole", ()
   );
 });
 
+test("offerer waiting for answer in state new does not retry", () => {
+  assert.equal(
+    shouldRetryRtcOffer({
+      dcOpen: false,
+      dcReadyState: "connecting",
+      connectionState: "new",
+      iceConnectionState: "new",
+      signalingState: "have-local-offer",
+      outstandingOffer: true,
+      lastOfferAt: 1_000,
+      now: 20_000,
+    }),
+    false,
+  );
+});
+
+test("startOfferer still running does not start another", () => {
+  assert.equal(
+    shouldRetryRtcOffer({
+      dcOpen: false,
+      offerCreateInFlight: true,
+      lastOfferAt: 1_000,
+      now: 15_000,
+    }),
+    false,
+  );
+});
+
 test("a connecting peer is not replaced by a newer offer", () => {
   assert.equal(
     shouldReplaceRtcPeer({
@@ -105,5 +133,82 @@ test("a failed peer can be replaced by a newer offer", () => {
       iceConnectionState: "failed",
     }),
     true,
+  );
+});
+
+test("answerer accepts a newer offer while the old peer is still connecting", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 15,
+      remoteGen: 16,
+    }),
+    true,
+  );
+});
+
+test("answerer drops a duplicate offer of the same gen", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 15,
+      remoteGen: 15,
+    }),
+    false,
+  );
+});
+
+test("answerer accepts the first offer when local gen is zero", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 0,
+      remoteGen: 15,
+    }),
+    true,
+  );
+});
+
+test("open datachannel does not accept a replacement offer", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: true,
+      localGen: 15,
+      remoteGen: 20,
+    }),
+    false,
+  );
+});
+
+test("local SDP is signaled before ICE gather complete", () => {
+  assert.equal(
+    localSdpReadyToSignal({
+      alreadySignaled: false,
+      sdp: "v=0",
+      iceGatheringState: "gathering",
+    }),
+    true,
+  );
+});
+
+test("local SDP is not signaled twice", () => {
+  assert.equal(
+    localSdpReadyToSignal({
+      alreadySignaled: true,
+      sdp: "v=0",
+      iceGatheringState: "complete",
+    }),
+    false,
+  );
+});
+
+test("empty local SDP is not signaled", () => {
+  assert.equal(
+    localSdpReadyToSignal({
+      alreadySignaled: false,
+      sdp: "",
+      iceGatheringState: "new",
+    }),
+    false,
   );
 });
