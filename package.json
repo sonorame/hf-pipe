@@ -1,6 +1,6 @@
 {
   "name": "hf-pipe",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "description": "Cross-host remote control when direct TCP is blocked: Matrix to-device signaling and WebRTC TURN/TCP RPC.",
   "type": "module",
@@ -21,6 +21,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.16.0",
     "matrix-js-sdk": "^37.4.0",
+    "undici": "^7.29.0",
     "werift": "^0.24.4",
     "zod": "^3.24.0"
   },

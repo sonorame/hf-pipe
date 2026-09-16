@@ -4,10 +4,15 @@ import net from "node:net";
 import test from "node:test";
 import {
   applyNodeNetworkPolicy,
+  CONNECT_TIMEOUT_MS,
+  hopDispatcherReady,
+  hopUndiciAgentOptions,
+  loadDnsPinsFromEnv,
+  loadUndici,
   PINNED_A,
   pinnedFetch,
   pinHost,
-  loadDnsPinsFromEnv,
+  pinnedLookup,
 } from "../src/network-policy.js";
 
 test("DNS pins come from HF_DNS_PIN, not a baked-in lab host", () => {
@@ -50,6 +55,27 @@ test("pinned A answers lookup when getaddrinfo cannot resolve the name", async (
   } finally {
     delete PINNED_A["hf-pin.invalid"];
   }
+});
+
+test("undici connect waits longer than the default 10s so a slow mtx-1 handshake can finish", () => {
+  assert.ok(CONNECT_TIMEOUT_MS > 10_000);
+  const opts = hopUndiciAgentOptions(pinnedLookup);
+  assert.equal(opts.connectTimeout, CONNECT_TIMEOUT_MS);
+  assert.equal(opts.connect.timeout, CONNECT_TIMEOUT_MS);
+  assert.equal(opts.connect.lookup, pinnedLookup);
+  assert.equal("family" in opts.connect, false);
+});
+
+test("loadUndici loads the npm undici package with Agent and fetch", () => {
+  const undici = loadUndici();
+  assert.equal(typeof undici.Agent, "function");
+  assert.equal(typeof undici.fetch, "function");
+  assert.equal(typeof undici.setGlobalDispatcher, "function");
+});
+
+test("applyNodeNetworkPolicy installs the undici dispatcher instead of the 10s default fetch", () => {
+  applyNodeNetworkPolicy();
+  assert.equal(hopDispatcherReady(), true);
 });
 
 test("pinnedFetch reaches a pinned hostname without OS DNS", async () => {

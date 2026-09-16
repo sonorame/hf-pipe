@@ -13,11 +13,14 @@ export const AUTO_SELECT_FAMILY = true;
 
 export const AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_MS = 500;
 
+/** Undici default connectTimeout is 10s. mtx-1 TLS from clean often takes longer. */
+export const CONNECT_TIMEOUT_MS = 60_000;
+
 /** Static A records when OS getaddrinfo / local DNS are dead. Filled from HF_DNS_PIN. */
 export const PINNED_A: Record<string, string> = {};
 
 type UndiciMod = {
-  Agent: new (opts: { connect?: { lookup?: typeof dns.lookup } }) => unknown;
+  Agent: new (opts: ReturnType<typeof hopUndiciAgentOptions>) => unknown;
   setGlobalDispatcher: (dispatcher: unknown) => void;
   fetch: (input: unknown, init?: unknown) => Promise<Response>;
 };
@@ -46,8 +49,25 @@ export function loadDnsPinsFromEnv(raw = process.env.HF_DNS_PIN || ""): void {
   }
 }
 
-function loadUndici(): UndiciMod {
-  return require("node:undici") as UndiciMod;
+export function loadUndici(): UndiciMod {
+  return require("undici") as UndiciMod;
+}
+
+export function hopDispatcherReady(): boolean {
+  return dispatcher != null;
+}
+
+export function hopUndiciAgentOptions(lookup: typeof dns.lookup): {
+  connectTimeout: number;
+  connect: { lookup: typeof dns.lookup; timeout: number };
+} {
+  return {
+    connectTimeout: CONNECT_TIMEOUT_MS,
+    connect: {
+      lookup,
+      timeout: CONNECT_TIMEOUT_MS,
+    },
+  };
 }
 
 export function pinnedLookup(
@@ -73,37 +93,38 @@ export function pinnedLookup(
 }
 
 function installPinnedLookup(): void {
-  if (pinsInstalled) return;
-  pinsInstalled = true;
-
-  dns.lookup = pinnedLookup as typeof dns.lookup;
-
-  dns.promises.lookup = ((hostname: string, options?: any) => {
-    const opts = options && typeof options === "object" ? options : {};
-    const ip = pinnedIp(hostname);
-    if (ip && opts.family !== 6) {
-      if (opts.all) {
-        return Promise.resolve([{ address: ip, family: 4 }]);
+  const first = !pinsInstalled;
+  if (first) {
+    pinsInstalled = true;
+    dns.lookup = pinnedLookup as typeof dns.lookup;
+    dns.promises.lookup = ((hostname: string, options?: any) => {
+      const opts = options && typeof options === "object" ? options : {};
+      const ip = pinnedIp(hostname);
+      if (ip && opts.family !== 6) {
+        if (opts.all) {
+          return Promise.resolve([{ address: ip, family: 4 }]);
+        }
+        return Promise.resolve({ address: ip, family: 4 });
       }
-      return Promise.resolve({ address: ip, family: 4 });
-    }
-    return origPromisesLookup(hostname, options as any);
-  }) as typeof dns.promises.lookup;
-
-  try {
-    const undici = loadUndici();
-    dispatcher = new undici.Agent({
-      connect: {
-        lookup: pinnedLookup as typeof dns.lookup,
-      },
-    });
-    undici.setGlobalDispatcher(dispatcher);
-  } catch {
-    dispatcher = undefined;
+      return origPromisesLookup(hostname, options as any);
+    }) as typeof dns.promises.lookup;
   }
-  const pins = Object.entries(PINNED_A);
-  if (pins.length) {
-    console.error(new Date().toISOString(), "hf net pin", pins.map(([h, ip]) => `${h} ${ip}`).join(", "));
+
+  if (!dispatcher) {
+    const undici = loadUndici();
+    dispatcher = new undici.Agent(hopUndiciAgentOptions(pinnedLookup as typeof dns.lookup));
+    undici.setGlobalDispatcher(dispatcher);
+  }
+  if (first) {
+    const pins = Object.entries(PINNED_A);
+    console.error(
+      new Date().toISOString(),
+      "hf net pin",
+      pins.length ? pins.map(([h, ip]) => `${h} ${ip}`).join(", ") : "(none)",
+      "connectTimeout",
+      CONNECT_TIMEOUT_MS,
+      hopDispatcherReady() ? "dispatcher on" : "dispatcher off",
+    );
   }
 }
 
@@ -111,12 +132,12 @@ export async function pinnedFetch(input: any, init?: any): Promise<Response> {
   applyNodeNetworkPolicy();
   const url = typeof input === "string" ? input : String(input?.url || input || "");
   let res: Response;
-  try {
-    const undici = loadUndici();
-    res = await undici.fetch(input, { ...(init || {}), dispatcher });
-  } catch {
-    res = await fetch(input, init);
+  const undici = loadUndici();
+  if (!dispatcher) {
+    dispatcher = new undici.Agent(hopUndiciAgentOptions(pinnedLookup as typeof dns.lookup));
+    undici.setGlobalDispatcher(dispatcher);
   }
+  res = await undici.fetch(input, { ...(init || {}), dispatcher });
   if (res.status !== 400 || !url.includes("/keys/upload")) return res;
   const body = await res.text();
   const mapped = mapKeysUploadResponse(url, res.status, body);

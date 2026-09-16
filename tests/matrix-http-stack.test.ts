@@ -48,3 +48,11 @@ test("dirty start loop does not use timeout /t", () => {
   assert.equal(cmd.includes("index.mjs"), true);
   assert.equal(/ping 127\.0\.0\.1/i.test(cmd), true);
 });
+
+test("network policy loads npm undici, not the missing node:undici builtin", () => {
+  const src = readFileSync(join(here, "../src/network-policy.ts"), "utf8");
+  assert.equal(src.includes('require("node:undici")'), false);
+  assert.equal(src.includes('require("undici")'), true);
+  assert.equal(src.includes("connectTimeout"), true);
+  assert.equal(src.includes("dispatcher on"), true);
+});
