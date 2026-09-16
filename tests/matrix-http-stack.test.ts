@@ -51,11 +51,55 @@ test("RTC session follows one outstanding offer and gen owner", () => {
   assert.equal(rtcSrc.includes("pc.setLocalDescription"), true);
 });
 
+test("RTC frames carry a process epoch next to gen", () => {
+  const rtcSrc = readFileSync(join(here, "../src/rtc-pipe.mjs"), "utf8");
+  assert.equal(rtcSrc.includes("sessionEpoch"), true);
+  assert.equal(rtcSrc.includes("epoch: frame.epoch ?? sessionEpoch"), true);
+  assert.equal(rtcSrc.includes("localEpoch: sessionEpoch"), true);
+  assert.equal(rtcSrc.includes("remoteEpoch: frame.epoch"), true);
+});
+
+test("offerer 90s clock restarts after the offer is sent and after the answer arrives", () => {
+  const rtcSrc = readFileSync(join(here, "../src/rtc-pipe.mjs"), "utf8");
+  const sent = rtcSrc.slice(
+    rtcSrc.indexOf("async function signalCreatedDescription"),
+    rtcSrc.indexOf("function attachDc"),
+  );
+  const answered = rtcSrc.slice(
+    rtcSrc.indexOf("async function applyAnswer"),
+    rtcSrc.indexOf("async function applyIce"),
+  );
+  assert.equal(sent.includes("lastOfferAt = Date.now()"), true);
+  assert.equal(answered.includes("lastOfferAt = Date.now()"), true);
+});
+
 test("dirty start loop does not use timeout /t", () => {
   const cmd = readFileSync(join(here, "../src/start-dirty.cmd"), "utf8");
   assert.equal(/timeout\s+\/t/i.test(cmd), false);
   assert.equal(cmd.includes("index.mjs"), true);
   assert.equal(/ping 127\.0\.0\.1/i.test(cmd), true);
+});
+
+test("start loops stop on hop already running", () => {
+  for (const name of ["start-dirty.cmd", "start-clean.cmd"]) {
+    const cmd = readFileSync(join(here, `../src/${name}`), "utf8");
+    assert.equal(cmd.includes('if "%EC%"=="2"'), true, name);
+    assert.equal(cmd.includes("hop already running"), true, name);
+    assert.equal(cmd.includes("goto loop"), true, name);
+  }
+});
+
+test("daemon claims a single hop instance and exits 2 on a busy RPC port", () => {
+  assert.equal(indexSrc.includes("claimHopInstance"), true);
+  assert.equal(indexSrc.includes("hop already running pid"), true);
+  assert.equal(indexSrc.includes("hopListenBusyExitCode"), true);
+  assert.equal(indexSrc.includes("process.exit(2)"), true);
+  assert.equal(indexSrc.includes("pidHeld"), true);
+});
+
+test("run.mjs does not restart when hop is already running", () => {
+  const runSrc = readFileSync(join(here, "../scripts/run.mjs"), "utf8");
+  assert.equal(runSrc.includes("code === 2"), true);
 });
 
 test("network policy loads npm undici, not the missing node:undici builtin", () => {

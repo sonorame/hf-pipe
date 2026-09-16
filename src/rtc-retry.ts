@@ -67,13 +67,19 @@ export function shouldAcceptRemoteOffer(s: {
   remoteGen?: number | null;
   connectionState?: string;
   iceConnectionState?: string;
+  localEpoch?: string | null;
+  remoteEpoch?: string | null;
 }): boolean {
+  const localEpoch = s.localEpoch ? String(s.localEpoch) : "";
+  const remoteEpoch = s.remoteEpoch ? String(s.remoteEpoch) : "";
+  if (localEpoch && remoteEpoch && localEpoch !== remoteEpoch) return true;
   if (s.dcOpen) return false;
   if (s.remoteGen == null) return true;
   const remote = Number(s.remoteGen);
   const local = Number(s.localGen);
   if (remote > local) return true;
   if (remote === local) return false;
+  if (localEpoch && remoteEpoch) return false;
   return rtcSessionDead(s);
 }
 

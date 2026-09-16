@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { RTCPeerConnection } from "werift";
 import { pinHost, pinnedFetch } from "../dist/network-policy.js";
 import {
@@ -24,6 +25,7 @@ let pendingIce = [];
 let dcOpen = false;
 let lastOfferAt = 0;
 let sessionGen = 0;
+let sessionEpoch = randomUUID();
 let offerCreateInFlight = false;
 let outstandingOffer = false;
 let making = Promise.resolve();
@@ -129,7 +131,7 @@ function descType(t) {
 }
 
 function emit(frame) {
-  return sendSignal({ ...frame, gen: frame.gen ?? sessionGen });
+  return sendSignal({ ...frame, gen: frame.gen ?? sessionGen, epoch: frame.epoch ?? sessionEpoch });
 }
 
 async function signalCreatedDescription(desc, sdpType) {
@@ -145,6 +147,7 @@ async function signalCreatedDescription(desc, sdpType) {
     sdpType,
     sdp,
   });
+  lastOfferAt = Date.now();
 }
 
 function attachDc(channel, role) {
@@ -320,6 +323,7 @@ async function sendChunked(type, id, payload) {
 function wirePc() {
   const boundPc = pc;
   const boundGen = sessionGen;
+  const boundEpoch = sessionEpoch;
   pc.onicecandidate = (ev) => {
     if (pc !== boundPc) return;
     const cand = ev?.candidate;
@@ -335,6 +339,7 @@ function wirePc() {
       mid: cand.sdpMid || "0",
       sdpMLineIndex: cand.sdpMLineIndex ?? 0,
       gen: boundGen,
+      epoch: boundEpoch,
     }).catch((e) => log("rtc sig ice", formatErrorChain(e)));
   };
   pc.onicegatheringstatechange = () => {
@@ -378,7 +383,7 @@ async function startOfferer() {
     attachDc(pc.createDataChannel("hf"), "offerer");
     const offer = await pc.createOffer();
     await signalCreatedDescription(offer, "offer");
-    log("rtc offerer", "gen", sessionGen, "sdp", Buffer.byteLength(offer.sdp || pc.localDescription.sdp));
+    log("rtc offerer", "gen", sessionGen, "epoch", sessionEpoch, "sdp", Buffer.byteLength(offer.sdp || pc.localDescription.sdp));
   } finally {
     offerCreateInFlight = false;
   }
@@ -435,6 +440,8 @@ async function applyOffer(frame) {
       dcOpen,
       localGen: sessionGen,
       remoteGen: frame.gen,
+      localEpoch: sessionEpoch,
+      remoteEpoch: frame.epoch,
       connectionState: pc?.connectionState,
       iceConnectionState: pc?.iceConnectionState,
     })
@@ -442,18 +449,27 @@ async function applyOffer(frame) {
     log("rtc drop gen", "offer", frame.gen, "have", sessionGen);
     return;
   }
+  if (frame.epoch) sessionEpoch = frame.epoch;
   if (frame.gen != null) sessionGen = frame.gen;
-  pendingIce = pendingIce.filter((c) => c.gen === sessionGen);
+  pendingIce = pendingIce.filter((c) => {
+    if (c.epoch && sessionEpoch && c.epoch !== sessionEpoch) return false;
+    if (c.gen != null && c.gen !== sessionGen) return false;
+    return true;
+  });
   await makePc();
   await pc.setRemoteDescription({ type: "offer", sdp: frame.sdp });
   remoteDescSet = true;
   await flushIce();
   const answer = await pc.createAnswer();
   await signalCreatedDescription(answer, "answer");
-  log("rtc got offer", "gen", sessionGen);
+  log("rtc got offer", "gen", sessionGen, "epoch", sessionEpoch);
 }
 
 async function applyAnswer(frame) {
+  if (frame.epoch && sessionEpoch && frame.epoch !== sessionEpoch) {
+    log("rtc drop gen", "answer", frame.gen, "have", sessionGen);
+    return;
+  }
   if (frame.gen != null && frame.gen !== sessionGen) {
     log("rtc drop gen", "answer", frame.gen, "have", sessionGen);
     return;
@@ -462,12 +478,15 @@ async function applyAnswer(frame) {
   await pc.setRemoteDescription({ type: "answer", sdp: frame.sdp });
   remoteDescSet = true;
   await flushIce();
+  lastOfferAt = Date.now();
   log("rtc got answer", "gen", sessionGen);
 }
 
 async function applyIce(frame) {
   const gen = frame.gen;
-  if (gen != null && sessionGen && gen !== sessionGen) {
+  const epoch = frame.epoch;
+  const epochMismatch = Boolean(epoch && sessionEpoch && epoch !== sessionEpoch);
+  if (!epochMismatch && gen != null && sessionGen && gen !== sessionGen) {
     log("rtc drop gen", "ice", gen, "have", sessionGen);
     return;
   }
@@ -476,8 +495,9 @@ async function applyIce(frame) {
     mid: frame.mid || "0",
     sdpMLineIndex: frame.sdpMLineIndex ?? 0,
     gen,
+    epoch,
   };
-  if (!pc || !remoteDescSet) {
+  if (epochMismatch || !pc || !remoteDescSet) {
     pendingIce.push(cand);
     return;
   }

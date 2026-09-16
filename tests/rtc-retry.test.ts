@@ -238,3 +238,61 @@ test("empty local SDP is not signaled", () => {
     false,
   );
 });
+
+test("answerer accepts a foreign epoch even when local gen is higher and still connecting", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 5,
+      remoteGen: 1,
+      localEpoch: "old-proc",
+      remoteEpoch: "new-proc",
+      connectionState: "connecting",
+      iceConnectionState: "checking",
+    }),
+    true,
+  );
+});
+
+test("answerer accepts a foreign epoch even if a zombie datachannel is still open", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: true,
+      localGen: 5,
+      remoteGen: 1,
+      localEpoch: "old-proc",
+      remoteEpoch: "new-proc",
+    }),
+    true,
+  );
+});
+
+test("answerer drops a lower gen of the same epoch even after ICE failed", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 5,
+      remoteGen: 1,
+      localEpoch: "same-proc",
+      remoteEpoch: "same-proc",
+      connectionState: "failed",
+      iceConnectionState: "failed",
+    }),
+    false,
+  );
+});
+
+test("answerer accepts a newer gen of the same epoch while still connecting", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 5,
+      remoteGen: 6,
+      localEpoch: "same-proc",
+      remoteEpoch: "same-proc",
+      connectionState: "connecting",
+      iceConnectionState: "checking",
+    }),
+    true,
+  );
+});

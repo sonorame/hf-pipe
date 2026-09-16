@@ -17,6 +17,9 @@ import {
 } from "./config.mjs";
 import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
 import { shouldRecycleAfterClockJump } from "../dist/watchdog-clock.js";
+import { claimHopInstance, hopListenBusyExitCode } from "../dist/hop-instance.js";
+import { formatErrorChain } from "../dist/error-chain.js";
+import { isFreshPeer, pickPeerFromDevices, resolvePeerId } from "../dist/peer-device.js";
 import { runCleanJob } from "./clean-jobs.mjs";
 import { httpPageKind } from "./hop-surface.mjs";
 import { readHotfolderTempConfig, sweepAllTemp } from "./hotfolder-temp.mjs";
@@ -59,20 +62,47 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function writePid() {
+function pidAlive(pid) {
   try {
-    writeFileSync(join(HERE, "hf.pid"), String(process.pid));
+    process.kill(pid, 0);
+    return true;
   } catch {
-    // ignore
+    return false;
   }
 }
 
+let pidHeld = false;
+
+function claimThisHop() {
+  const pidPath = join(HERE, "hf.pid");
+  const result = claimHopInstance({
+    pidPath,
+    pid: process.pid,
+    isAlive: pidAlive,
+    readFile: (p) => {
+      try {
+        return readFileSync(p, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    writeFile: (p, body) => writeFileSync(p, body),
+  });
+  if (result.status === "busy") {
+    log("hop already running pid", result.holderPid);
+    process.exit(2);
+  }
+  pidHeld = true;
+}
+
 function clearPid() {
+  if (!pidHeld) return;
   try {
     unlinkSync(join(HERE, "hf.pid"));
   } catch {
     // ignore
   }
+  pidHeld = false;
 }
 
 process.on("exit", clearPid);
@@ -195,28 +225,37 @@ function accessToken() {
 }
 
 let peerCache = { id: "", at: 0 };
-
-function nameOf(device) {
-  return String(device.display_name || "").toLowerCase();
-}
+let incomingPeer = "";
 
 async function resolvePeerDevice(myDevice) {
-  if (process.env.HF_PEER_DEVICE) return process.env.HF_PEER_DEVICE;
-  if (peerCache.id && Date.now() - peerCache.at < 15000) return peerCache.id;
-  const res = await pinnedFetch(`${hsBase()}/_matrix/client/v3/devices`, {
-    headers: { Authorization: `Bearer ${accessToken()}` },
+  const envPeer = process.env.HF_PEER_DEVICE || "";
+  const now = Date.now();
+  if (!envPeer && isFreshPeer(peerCache.id ? peerCache : null, now)) {
+    return peerCache.id;
+  }
+  let listed = null;
+  let listFailed = false;
+  try {
+    const res = await pinnedFetch(`${hsBase()}/_matrix/client/v3/devices`, {
+      headers: { Authorization: `Bearer ${accessToken()}` },
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`devices ${res.status} ${text.slice(0, 180)}`);
+    listed = pickPeerFromDevices(JSON.parse(text).devices || [], myDevice, peerNameNeedles(sideNow()));
+  } catch (e) {
+    listFailed = true;
+    log("peer", formatErrorChain(e));
+  }
+  const got = resolvePeerId({
+    envPeer: envPeer || undefined,
+    listed,
+    incoming: incomingPeer || undefined,
+    remembered: peerCache.id ? peerCache : null,
+    listFailed,
+    now,
   });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`devices ${res.status} ${text.slice(0, 180)}`);
-  const devices = JSON.parse(text).devices || [];
-  const others = devices.filter((d) => d.device_id && d.device_id !== myDevice);
-  const needles = peerNameNeedles(sideNow());
-  const pred = (d) => needles.some((n) => nameOf(d).includes(n));
-  const hits = others.filter(pred).sort((a, b) => (b.last_seen_ts || 0) - (a.last_seen_ts || 0));
-  const id = hits[0]?.device_id;
-  if (!id) throw new Error(`no peer hf device (looked for: ${needles.join(", ")})`);
-  peerCache = { id, at: Date.now() };
-  return id;
+  peerCache = { id: got.id, at: now };
+  return got.id;
 }
 
 async function bootClient(session) {
@@ -250,12 +289,12 @@ async function bootClient(session) {
 }
 
 async function sendFrame(client, lane, frame) {
-  const env = { hf: 1, lane, frame };
+  const myDevice = client.getDeviceId?.() || process.env.MATRIX_DEVICE_ID;
+  const env = { hf: 1, lane, frame, from: myDevice };
   const raw = JSON.stringify(env);
   if (raw.length > MAX_EVENT) {
     throw new Error(`frame ${frame.id} too large (${raw.length} > ${MAX_EVENT})`);
   }
-  const myDevice = client.getDeviceId?.() || process.env.MATRIX_DEVICE_ID;
   const peer = await resolvePeerDevice(myDevice);
   const txn = `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 8)}`;
   const url = `${hsBase()}/_matrix/client/v3/sendToDevice/${encodeURIComponent(EVENT_TYPE)}/${txn}`;
@@ -372,11 +411,18 @@ function startDirtyHttp() {
     res.end("no");
   });
   server.listen(port, bind, () => log("rpc http", `${bind}:${port}`));
-  server.on("error", (e) => log("rpc http", e.message || e));
+  server.on("error", (e) => {
+    log("rpc http", e.message || e);
+    const code = hopListenBusyExitCode(e);
+    if (code != null) process.exit(code);
+  });
 }
 
 async function handleEnvelope(env, client, seen) {
   if (!env?.lane || !env.frame) return;
+  if (typeof env.from === "string" && env.from.trim()) {
+    incomingPeer = env.from.trim();
+  }
   const frame = env.frame;
   if (env.lane === "rtc") {
     rtcHandler?.(frame);
@@ -478,7 +524,7 @@ async function bootForever(session) {
     try {
       return await bootClient(session);
     } catch (e) {
-      log("boot retry", e.message || e);
+      log("boot retry", formatErrorChain(e));
       await sleep(8000);
       const fresh = loadJson(sessionPath, session);
       if (fresh?.access_token) Object.assign(session, fresh);
@@ -505,7 +551,7 @@ async function daemon() {
   if (side !== "dirty" && side !== "clean") {
     throw new Error("set HF_SIDE=dirty|clean");
   }
-  writePid();
+  claimThisHop();
   const tempCfg = { ...readHotfolderTempConfig(), root: DIRTY_LOCAL };
   const sweepTick = () => {
     try {
@@ -544,11 +590,11 @@ async function daemon() {
     const peer = await resolvePeerDevice(client.getDeviceId());
     log("peer device", peer);
   } catch (e) {
-    log("peer", e.message || e);
+    log("peer", formatErrorChain(e));
   }
 
   const onToDevice = (event) => {
-    handleToDevice(event, client, seen).catch((e) => log("in", e.message || e));
+    handleToDevice(event, client, seen).catch((e) => log("in", formatErrorChain(e)));
   };
   client.on("toDeviceEvent", onToDevice);
   client.on("Event.decrypted", (event) => {
@@ -565,15 +611,15 @@ async function daemon() {
       sendSignal: (frame) => sendFrame(client, "rtc", frame),
       log,
       onRpc: side === "clean" ? (task) => runCleanJob(task) : null,
-    }).catch((e) => log("rtc", e.message || e));
+    }).catch((e) => log("rtc", formatErrorChain(e)));
   } catch (e) {
-    log("rtc disabled", e.message || e);
+    log("rtc disabled", formatErrorChain(e));
   }
   while (true) {
     try {
       await pumpOutgoing(client, seen, cleanRoot);
     } catch (e) {
-      log("out", e.message || e);
+      log("out", formatErrorChain(e));
     }
     await sleep(POLL_MS);
   }

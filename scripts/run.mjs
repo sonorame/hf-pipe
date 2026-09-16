@@ -27,6 +27,7 @@ function start() {
   });
   child.on("exit", (code, signal) => {
     if (once) process.exit(code ?? (signal ? 1 : 0));
+    if (code === 2) process.exit(2);
     console.error(new Date().toISOString(), "node exited", code ?? signal, "- restart in 4s");
     setTimeout(start, 4000);
   });
