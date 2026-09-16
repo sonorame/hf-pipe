@@ -1,0 +1,53 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { summarizeDoctor, formatDoctorLines } from "../src/doctor.js";
+
+test("all checks ok is GREEN with no culprit", () => {
+  const r = summarizeDoctor([
+    { name: "node", ok: true },
+    { name: "session", ok: true },
+    { name: "versions", ok: true },
+  ]);
+  assert.equal(r.verdict, "GREEN");
+  assert.deepEqual(r.failing, []);
+  assert.equal(r.culprit, null);
+});
+
+test("first failing check is the culprit seam", () => {
+  const r = summarizeDoctor([
+    { name: "node", ok: true },
+    { name: "tcp443", ok: false, detail: "timeout" },
+    { name: "versions", ok: false, detail: "no 200" },
+  ]);
+  assert.equal(r.verdict, "RED");
+  assert.deepEqual(r.failing, ["tcp443", "versions"]);
+  assert.equal(r.culprit, "tcp443");
+});
+
+test("empty check list is RED (nothing proven)", () => {
+  const r = summarizeDoctor([]);
+  assert.equal(r.verdict, "RED");
+  assert.equal(r.culprit, null);
+});
+
+test("skipped checks do not fail the verdict", () => {
+  const r = summarizeDoctor([
+    { name: "node", ok: true },
+    { name: "scheduledTask", ok: true, skipped: true },
+  ]);
+  assert.equal(r.verdict, "GREEN");
+  assert.deepEqual(r.failing, []);
+});
+
+test("each line is prefixed GREEN/RED/SKIP with the check name", () => {
+  const lines = formatDoctorLines([
+    { name: "node", ok: true, detail: "v24" },
+    { name: "tcp443", ok: false, detail: "timeout" },
+    { name: "scheduledTask", ok: true, skipped: true, detail: "n/a on clean" },
+  ]);
+  assert.deepEqual(lines, [
+    "GREEN node v24",
+    "RED   tcp443 timeout",
+    "SKIP  scheduledTask n/a on clean",
+  ]);
+});

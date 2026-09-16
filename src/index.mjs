@@ -16,7 +16,7 @@ import {
   peerNameNeedles,
 } from "./config.mjs";
 import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
-import { shouldRecycleAfterClockJump } from "../dist/watchdog-clock.js";
+import { shouldRecycleAfterClockJump, shouldExitOnSyncDead } from "../dist/watchdog-clock.js";
 import { claimHopInstance, hopListenBusyExitCode } from "../dist/hop-instance.js";
 import { formatErrorChain } from "../dist/error-chain.js";
 import { isFreshPeer, pickPeerFromDevices, resolvePeerId } from "../dist/peer-device.js";
@@ -540,7 +540,16 @@ function watchSync(client) {
   });
   const deadMs = Number(process.env.HF_SYNC_DEAD_MS || 120000);
   setInterval(() => {
-    if (Date.now() - lastOk <= deadMs) return;
+    if (
+      !shouldExitOnSyncDead({
+        rtcUp: Boolean(rtcMod?.isRtcUp?.()),
+        lastOkMs: lastOk,
+        nowMs: Date.now(),
+        deadMs,
+      })
+    ) {
+      return;
+    }
     log("sync dead", deadMs, "exit for watchdog");
     process.exit(7);
   }, 10000);

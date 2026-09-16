@@ -5,6 +5,8 @@ import {
   shouldRetryRtcOffer,
   shouldAcceptRemoteOffer,
   localSdpReadyToSignal,
+  rtcRecycleAction,
+  RTC_STUCK_HARD_MS,
 } from "../dist/rtc-retry.js";
 import { formatErrorChain } from "../dist/error-chain.js";
 
@@ -30,6 +32,9 @@ let offerCreateInFlight = false;
 let outstandingOffer = false;
 let making = Promise.resolve();
 let onRpc = null;
+let rtcStuckSince = 0;
+let lastRecreateAt = 0;
+let lastProofAt = 0;
 const waiters = new Map();
 const parts = new Map();
 
@@ -225,6 +230,7 @@ function onBinary(buf) {
     return;
   }
   if (m.type === TYPE_PONG && side === "dirty") {
+    lastProofAt = Date.now();
     const st = pongGot.get(m.id);
     if (!st) return;
     st.got.add(m.offset);
@@ -407,8 +413,28 @@ export async function startRtc(opts) {
   if (side === "dirty") {
     await startOfferer();
     setInterval(() => {
-      if (dcOpen && dc?.readyState === "open") {
+      const now = Date.now();
+      if (isRtcUp() && (!lastProofAt || now - lastProofAt < RTC_STUCK_HARD_MS)) {
+        rtcStuckSince = 0;
         sendKeepalive();
+        return;
+      }
+      if (!rtcStuckSince) rtcStuckSince = now;
+      const action = rtcRecycleAction({
+        dcOpen,
+        stuckSinceMs: rtcStuckSince,
+        now,
+        lastRecreateAt,
+      });
+      if (action === "exit") {
+        log("rtc stuck", now - rtcStuckSince, "ms - exit(7) for watchdog");
+        process.exit(7);
+      }
+      if (action === "recreate") {
+        lastRecreateAt = now;
+        sessionEpoch = randomUUID();
+        log("rtc stuck", now - rtcStuckSince, "ms - recreate peer epoch", sessionEpoch);
+        startOfferer().catch((e) => log("rtc recreate", formatErrorChain(e)));
         return;
       }
       if (
@@ -421,7 +447,7 @@ export async function startRtc(opts) {
           outstandingOffer,
           offerCreateInFlight,
           lastOfferAt,
-          now: Date.now(),
+          now,
         })
       ) {
         return;

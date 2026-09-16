@@ -11,6 +11,18 @@ git fetch --tags
 git checkout working-baseline-2026-09-15
 ```
 
+Срезы 2026-09-16 (от новых к старым):
+
+```text
+hop-doctor-selfheal-2026-09-16
+hop-rtc-epoch-instance-2026-09-16
+hop-rtc-dead-gen-2026-09-16
+hop-rtc-offer-session-2026-09-16
+hop-rtc-keep-peer-2026-09-16
+hop-retry-etimedout-2026-09-16
+hop-undici-connect-60s-2026-09-16
+```
+
 После переключения установите зависимости и запустите нужную сторону:
 
 ```text

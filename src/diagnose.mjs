@@ -2,7 +2,7 @@ import dns from "node:dns";
 import dnsPromises from "node:dns/promises";
 import net from "node:net";
 import { loadEnvFile, homeserverUrl } from "./config.mjs";
-import { applyNodeNetworkPolicy } from "../dist/network-policy.js";
+import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
 
 loadEnvFile();
 applyNodeNetworkPolicy();
@@ -85,6 +85,13 @@ async function main() {
     console.log("fetch sdk-opts", res.status);
   } catch (e) {
     dumpErr("fetch sdk-opts FAIL", e);
+  }
+
+  try {
+    const res = await pinnedFetch(url);
+    console.log("fetch pinned", res.status);
+  } catch (e) {
+    dumpErr("fetch pinned FAIL", e);
   }
 }
 

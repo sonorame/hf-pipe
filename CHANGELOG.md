@@ -1,5 +1,13 @@
 # История изменений
 
+## 1.3.1
+
+- `scripts/hop-up.cmd` - один клик: поднять демон грязной, дождаться RTC, прогнать `src/hop-doctor.mjs`.
+- `hop-doctor.mjs` - самодиагностика GREEN/RED по цепочке (node, сессия, DNS, TCP 443, versions, TURN, /status, end-to-end ping, планировщик). Первый RED - виновный шов.
+- Самолечение offerer: `rtcRecycleAction` soft 45с пересоздает peer, hard 120с делает `exit(7)` для restart-loop. Answerer остается пассивным.
+- Watchdog больше не убивает процесс, пока RTC жив, а Matrix sync завис.
+- Тег `hop-doctor-selfheal-2026-09-16`.
+
 ## 1.3.0
 
 - Удален интерактивный веб-просмотр экрана через браузер (`GET /`, `GET /view`, `GET /shot`) и управление мышью/клавиатурой (`mouse`, `key`, `type`, `input.ps1`, MCP-инструменты `clean_mouse`, `clean_key`, `clean_type`).

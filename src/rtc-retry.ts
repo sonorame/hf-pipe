@@ -91,3 +91,33 @@ export function localSdpReadyToSignal(s: {
   if (s.alreadySignaled) return false;
   return Boolean(s.sdp && String(s.sdp).length > 0);
 }
+
+/** Soft: force a clean re-offer even when shouldRetryRtcOffer is being conservative. */
+export const RTC_STUCK_SOFT_MS = 45_000;
+/** Hard: give up on this process and exit(7) so start-*.cmd restarts a fresh one. */
+export const RTC_STUCK_HARD_MS = 120_000;
+/** Do not recreate the peer more often than this. */
+export const RTC_RECREATE_GAP_MS = 20_000;
+
+export type RtcRecycleAction = "none" | "recreate" | "exit";
+
+export function rtcRecycleAction(s: {
+  dcOpen: boolean;
+  stuckSinceMs: number;
+  now: number;
+  softMs?: number;
+  hardMs?: number;
+  lastRecreateAt?: number;
+  recreateGapMs?: number;
+}): RtcRecycleAction {
+  if (s.dcOpen) return "none";
+  if (!s.stuckSinceMs) return "none";
+  const stuck = s.now - s.stuckSinceMs;
+  const hard = s.hardMs ?? RTC_STUCK_HARD_MS;
+  if (stuck >= hard) return "exit";
+  const soft = s.softMs ?? RTC_STUCK_SOFT_MS;
+  if (stuck < soft) return "none";
+  const gap = s.recreateGapMs ?? RTC_RECREATE_GAP_MS;
+  if (s.now - (s.lastRecreateAt ?? 0) < gap) return "none";
+  return "recreate";
+}

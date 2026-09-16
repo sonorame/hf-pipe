@@ -15,7 +15,8 @@
     "start:dirty": "node scripts/run.mjs dirty",
     "start:clean": "node scripts/run.mjs clean",
     "login": "node src/login.mjs",
-    "doctor": "node src/diagnose.mjs",
+    "doctor": "node src/hop-doctor.mjs",
+    "diagnose": "node src/diagnose.mjs",
     "mcp": "node src/hf-clean-mcp.mjs"
   },
   "dependencies": {

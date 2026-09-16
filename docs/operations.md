@@ -88,11 +88,13 @@ npm start -- dirty
 - Выполните тестовую команду в консоли: `python src/dirty.py ask hostname`.
 - Сделайте пробный снимок экрана: `python src/dirty.py ask screenshot`.
 
-Для полной проверки сетевого стека, DNS и версии Node выполните:
+Для полной проверки канала (DNS, TCP 443, Matrix versions, TURN, локальный `/status` и end-to-end ping через datachannel) выполните:
 
 ```bash
 npm run doctor
 ```
+
+На грязной машине тот же путь одним кликом: `scripts\hop-up.cmd` (поднимает демон, если он не жив, ждет RTC, гоняет доктор). HTTP-only замер стека: `npm run diagnose`.
 
 ## 7. Интеграция с Cursor (MCP)
 

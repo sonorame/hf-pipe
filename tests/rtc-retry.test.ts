@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { shouldRetryRtcOffer, shouldReplaceRtcPeer, shouldAcceptRemoteOffer, localSdpReadyToSignal } from "../src/rtc-retry.js";
+import { shouldRetryRtcOffer, shouldReplaceRtcPeer, shouldAcceptRemoteOffer, localSdpReadyToSignal, rtcRecycleAction } from "../src/rtc-retry.js";
 
 test("open datachannel does not retry", () => {
   assert.equal(
@@ -295,4 +295,78 @@ test("answerer accepts a newer gen of the same epoch while still connecting", ()
     }),
     true,
   );
+});
+
+test("healthy open datachannel is never recycled", () => {
+  assert.equal(
+    rtcRecycleAction({ dcOpen: true, stuckSinceMs: 0, now: 500_000 }),
+    "none",
+  );
+});
+
+test("no stuck timestamp yet does nothing", () => {
+  assert.equal(
+    rtcRecycleAction({ dcOpen: false, stuckSinceMs: 0, now: 500_000 }),
+    "none",
+  );
+});
+
+test("stuck below the soft threshold leaves reoffer to do its job", () => {
+  assert.equal(
+    rtcRecycleAction({ dcOpen: false, stuckSinceMs: 1_000, now: 30_000, softMs: 45_000, hardMs: 120_000 }),
+    "none",
+  );
+});
+
+test("stuck past soft with the recreate gap elapsed forces a peer recreate", () => {
+  assert.equal(
+    rtcRecycleAction({
+      dcOpen: false,
+      stuckSinceMs: 1_000,
+      now: 50_000,
+      softMs: 45_000,
+      hardMs: 120_000,
+      lastRecreateAt: 0,
+      recreateGapMs: 20_000,
+    }),
+    "recreate",
+  );
+});
+
+test("stuck past soft but recently recreated waits out the gap", () => {
+  assert.equal(
+    rtcRecycleAction({
+      dcOpen: false,
+      stuckSinceMs: 1_000,
+      now: 60_000,
+      softMs: 45_000,
+      hardMs: 120_000,
+      lastRecreateAt: 50_000,
+      recreateGapMs: 20_000,
+    }),
+    "none",
+  );
+});
+
+test("stuck past the hard threshold exits for a full process restart", () => {
+  assert.equal(
+    rtcRecycleAction({
+      dcOpen: false,
+      stuckSinceMs: 1_000,
+      now: 125_000,
+      softMs: 45_000,
+      hardMs: 120_000,
+      lastRecreateAt: 120_000,
+      recreateGapMs: 20_000,
+    }),
+    "exit",
+  );
+});
+
+test("rtc-pipe wires the recycle escalation on the offerer", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/rtc-pipe.mjs", import.meta.url), "utf8");
+  assert.match(src, /rtcRecycleAction/);
+  assert.match(src, /process\.exit\(7\)/);
+  assert.match(src, /recreate peer epoch/);
 });
