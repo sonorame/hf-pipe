@@ -45,6 +45,8 @@ test("RTC session follows one outstanding offer and gen owner", () => {
   assert.equal(rtcSrc.includes("offerCreateInFlight"), true);
   assert.equal(rtcSrc.includes("outstandingOffer"), true);
   assert.equal(rtcSrc.includes("rtc drop gen"), true);
+  assert.equal(rtcSrc.includes("connectionState: pc?.connectionState"), true);
+  assert.equal(rtcSrc.includes("iceConnectionState: pc?.iceConnectionState"), true);
   assert.equal(/await pc\.setLocalDescription/.test(rtcSrc), false);
   assert.equal(rtcSrc.includes("pc.setLocalDescription"), true);
 });

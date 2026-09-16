@@ -435,6 +435,8 @@ async function applyOffer(frame) {
       dcOpen,
       localGen: sessionGen,
       remoteGen: frame.gen,
+      connectionState: pc?.connectionState,
+      iceConnectionState: pc?.iceConnectionState,
     })
   ) {
     log("rtc drop gen", "offer", frame.gen, "have", sessionGen);

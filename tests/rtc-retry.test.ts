@@ -180,6 +180,32 @@ test("open datachannel does not accept a replacement offer", () => {
   );
 });
 
+test("answerer accepts a lower gen after ICE failed", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 5,
+      remoteGen: 1,
+      connectionState: "failed",
+      iceConnectionState: "failed",
+    }),
+    true,
+  );
+});
+
+test("answerer drops a lower gen while the current peer is still connecting", () => {
+  assert.equal(
+    shouldAcceptRemoteOffer({
+      dcOpen: false,
+      localGen: 5,
+      remoteGen: 1,
+      connectionState: "connecting",
+      iceConnectionState: "checking",
+    }),
+    false,
+  );
+});
+
 test("local SDP is signaled before ICE gather complete", () => {
   assert.equal(
     localSdpReadyToSignal({

@@ -49,14 +49,32 @@ export function shouldReplaceRtcPeer(s: {
   return true;
 }
 
+function rtcSessionDead(s: {
+  connectionState?: string;
+  iceConnectionState?: string;
+}): boolean {
+  const conn = String(s.connectionState || "");
+  const ice = String(s.iceConnectionState || "");
+  return (
+    ["failed", "closed", "disconnected"].includes(conn) ||
+    ["failed", "closed", "disconnected"].includes(ice)
+  );
+}
+
 export function shouldAcceptRemoteOffer(s: {
   dcOpen: boolean;
   localGen: number;
   remoteGen?: number | null;
+  connectionState?: string;
+  iceConnectionState?: string;
 }): boolean {
   if (s.dcOpen) return false;
   if (s.remoteGen == null) return true;
-  return Number(s.remoteGen) > Number(s.localGen);
+  const remote = Number(s.remoteGen);
+  const local = Number(s.localGen);
+  if (remote > local) return true;
+  if (remote === local) return false;
+  return rtcSessionDead(s);
 }
 
 export function localSdpReadyToSignal(s: {
