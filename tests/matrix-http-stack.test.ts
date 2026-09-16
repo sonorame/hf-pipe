@@ -40,6 +40,7 @@ test("daemon recycles after hibernate clock jump", () => {
 test("RTC retry does not wait connecting forever", () => {
   const rtcSrc = readFileSync(join(here, "../src/rtc-pipe.mjs"), "utf8");
   assert.equal(rtcSrc.includes("shouldRetryRtcOffer"), true);
+  assert.equal(rtcSrc.includes("shouldReplaceRtcPeer"), true);
 });
 
 test("dirty start loop does not use timeout /t", () => {

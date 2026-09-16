@@ -1,6 +1,7 @@
 import { RTCPeerConnection } from "werift";
 import { pinHost, pinnedFetch } from "../dist/network-policy.js";
-import { shouldRetryRtcOffer } from "../dist/rtc-retry.js";
+import { shouldRetryRtcOffer, shouldReplaceRtcPeer } from "../dist/rtc-retry.js";
+import { formatErrorChain } from "../dist/error-chain.js";
 
 const MAGIC = Buffer.from("HFP1");
 const TYPE_PING = 1;
@@ -308,7 +309,7 @@ function wirePc() {
       candidate: line,
       mid: cand.sdpMid || "0",
       sdpMLineIndex: cand.sdpMLineIndex ?? 0,
-    }).catch((e) => log("rtc sig ice", e.message || e));
+    }).catch((e) => log("rtc sig ice", formatErrorChain(e)));
   };
   pc.onicegatheringstatechange = () => log("rtc gather", pc.iceGatheringState);
   pc.onconnectionstatechange = () => {
@@ -385,7 +386,7 @@ export async function startRtc(opts) {
         return;
       }
       log("rtc retry offer");
-      startOfferer().catch((e) => log("rtc retry", e.message || e));
+      startOfferer().catch((e) => log("rtc retry", formatErrorChain(e)));
     }, 4000);
   } else {
     log("rtc wait offer");
@@ -393,6 +394,17 @@ export async function startRtc(opts) {
 }
 
 async function applyOffer(frame) {
+  if (
+    pc &&
+    !shouldReplaceRtcPeer({
+      dcOpen,
+      connectionState: pc.connectionState,
+      iceConnectionState: pc.iceConnectionState,
+    })
+  ) {
+    log("rtc keep peer drop offer", "gen", frame.gen);
+    return;
+  }
   if (frame.gen != null) sessionGen = frame.gen;
   pendingIce = pendingIce.filter((c) => c.gen === sessionGen);
   await makePc();
@@ -456,5 +468,5 @@ export function handleRtcSignal(frame) {
       }
       if (t === "ice") await applyIce(frame);
     })
-    .catch((e) => log("rtc sig", e.message || e));
+    .catch((e) => log("rtc sig", formatErrorChain(e)));
 }

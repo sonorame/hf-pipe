@@ -1,4 +1,4 @@
-export const RTC_OFFER_STALE_MS = 8_000;
+export const RTC_OFFER_STALE_MS = 90_000;
 export const RTC_RETRY_MIN_GAP_MS = 8_000;
 
 export function shouldRetryRtcOffer(s: {
@@ -17,6 +17,21 @@ export function shouldRetryRtcOffer(s: {
   const stale = s.staleMs ?? RTC_OFFER_STALE_MS;
   const connecting = ["connecting", "checking"].includes(String(s.connectionState || ""));
   const iceChecking = s.iceConnectionState === "checking";
-  if ((connecting || iceChecking) && s.now - s.lastOfferAt < stale) return false;
+  const iceFailed =
+    s.connectionState === "failed" || s.iceConnectionState === "failed";
+  if ((connecting || iceChecking || iceFailed) && s.now - s.lastOfferAt < stale) return false;
+  return true;
+}
+
+export function shouldReplaceRtcPeer(s: {
+  dcOpen: boolean;
+  connectionState?: string;
+  iceConnectionState?: string;
+}): boolean {
+  if (s.dcOpen) return false;
+  const conn = String(s.connectionState || "");
+  const ice = String(s.iceConnectionState || "");
+  if (conn === "connected" || ice === "connected" || ice === "completed") return false;
+  if (["connecting", "checking"].includes(conn) || ice === "checking") return false;
   return true;
 }
