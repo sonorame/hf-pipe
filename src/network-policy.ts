@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import dns from "node:dns";
 import net from "node:net";
+import { formatErrorChain } from "./error-chain.js";
 import { mapKeysUploadResponse } from "./hop-client-mode.js";
 
 const require = createRequire(import.meta.url);
@@ -19,8 +20,54 @@ export const CONNECT_TIMEOUT_MS = 60_000;
 /** Static A records when OS getaddrinfo / local DNS are dead. Filled from HF_DNS_PIN. */
 export const PINNED_A: Record<string, string> = {};
 
+/** Undici RetryAgent default errorCodes omit ETIMEDOUT / connect timeout. */
+export const HOP_RETRY_ERROR_CODES = [
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "EHOSTDOWN",
+  "EHOSTUNREACH",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+] as const;
+
+export const HOP_RETRY_METHODS = [
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "PUT",
+  "DELETE",
+  "POST",
+] as const;
+
+/** Several Windows SYN blackholes (~21s each) plus backoff. */
+export const HOP_RETRY_MAX_RETRIES = 8;
+
+export function hopRetryAgentOptions(): {
+  maxRetries: number;
+  minTimeout: number;
+  maxTimeout: number;
+  timeoutFactor: number;
+  methods: string[];
+  errorCodes: string[];
+} {
+  return {
+    maxRetries: HOP_RETRY_MAX_RETRIES,
+    minTimeout: 1_000,
+    maxTimeout: 30_000,
+    timeoutFactor: 2,
+    methods: [...HOP_RETRY_METHODS],
+    errorCodes: [...HOP_RETRY_ERROR_CODES],
+  };
+}
+
 type UndiciMod = {
   Agent: new (opts: ReturnType<typeof hopUndiciAgentOptions>) => unknown;
+  RetryAgent: new (dispatcher: unknown, opts: ReturnType<typeof hopRetryAgentOptions>) => unknown;
   setGlobalDispatcher: (dispatcher: unknown) => void;
   fetch: (input: unknown, init?: unknown) => Promise<Response>;
 };
@@ -57,12 +104,28 @@ export function hopDispatcherReady(): boolean {
   return dispatcher != null;
 }
 
+export function createHopDispatcher(undici = loadUndici()): unknown {
+  const agent = new undici.Agent(hopUndiciAgentOptions(pinnedLookup as typeof dns.lookup));
+  return new undici.RetryAgent(agent, hopRetryAgentOptions());
+}
+
+/** Undici default keepAliveTimeout is 4s. Hop /sync poll is 10s. */
+export const KEEP_ALIVE_TIMEOUT_MS = 60_000;
+
+export const KEEP_ALIVE_MAX_TIMEOUT_MS = 600_000;
+
 export function hopUndiciAgentOptions(lookup: typeof dns.lookup): {
   connectTimeout: number;
+  connections: number;
+  keepAliveTimeout: number;
+  keepAliveMaxTimeout: number;
   connect: { lookup: typeof dns.lookup; timeout: number };
 } {
   return {
     connectTimeout: CONNECT_TIMEOUT_MS,
+    connections: 1,
+    keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
+    keepAliveMaxTimeout: KEEP_ALIVE_MAX_TIMEOUT_MS,
     connect: {
       lookup,
       timeout: CONNECT_TIMEOUT_MS,
@@ -112,7 +175,7 @@ function installPinnedLookup(): void {
 
   if (!dispatcher) {
     const undici = loadUndici();
-    dispatcher = new undici.Agent(hopUndiciAgentOptions(pinnedLookup as typeof dns.lookup));
+    dispatcher = createHopDispatcher(undici);
     undici.setGlobalDispatcher(dispatcher);
   }
   if (first) {
@@ -124,6 +187,9 @@ function installPinnedLookup(): void {
       "connectTimeout",
       CONNECT_TIMEOUT_MS,
       hopDispatcherReady() ? "dispatcher on" : "dispatcher off",
+      "retry on",
+      "connections",
+      1,
     );
   }
 }
@@ -132,12 +198,17 @@ export async function pinnedFetch(input: any, init?: any): Promise<Response> {
   applyNodeNetworkPolicy();
   const url = typeof input === "string" ? input : String(input?.url || input || "");
   let res: Response;
-  const undici = loadUndici();
-  if (!dispatcher) {
-    dispatcher = new undici.Agent(hopUndiciAgentOptions(pinnedLookup as typeof dns.lookup));
-    undici.setGlobalDispatcher(dispatcher);
+  try {
+    const undici = loadUndici();
+    if (!dispatcher) {
+      dispatcher = createHopDispatcher(undici);
+      undici.setGlobalDispatcher(dispatcher);
+    }
+    res = await undici.fetch(input, { ...(init || {}), dispatcher });
+  } catch (e) {
+    console.error(new Date().toISOString(), "hf fetch", String(url).split("?")[0], formatErrorChain(e));
+    throw e;
   }
-  res = await undici.fetch(input, { ...(init || {}), dispatcher });
   if (res.status !== 400 || !url.includes("/keys/upload")) return res;
   const body = await res.text();
   const mapped = mapKeysUploadResponse(url, res.status, body);

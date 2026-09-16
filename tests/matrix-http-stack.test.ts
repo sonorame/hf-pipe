@@ -55,4 +55,6 @@ test("network policy loads npm undici, not the missing node:undici builtin", () 
   assert.equal(src.includes('require("undici")'), true);
   assert.equal(src.includes("connectTimeout"), true);
   assert.equal(src.includes("dispatcher on"), true);
+  assert.equal(src.includes("retry on"), true);
+  assert.equal(src.includes("RetryAgent"), true);
 });

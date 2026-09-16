@@ -6,7 +6,9 @@ import {
   applyNodeNetworkPolicy,
   CONNECT_TIMEOUT_MS,
   hopDispatcherReady,
+  hopRetryAgentOptions,
   hopUndiciAgentOptions,
+  createHopDispatcher,
   loadDnsPinsFromEnv,
   loadUndici,
   PINNED_A,
@@ -66,16 +68,86 @@ test("undici connect waits longer than the default 10s so a slow mtx-1 handshake
   assert.equal("family" in opts.connect, false);
 });
 
+test("undici agent reuses one TCP and keep-alive longer than hop sync poll", () => {
+  const opts = hopUndiciAgentOptions(pinnedLookup);
+  assert.equal(opts.connections, 1);
+  assert.ok(opts.keepAliveTimeout > 10_000);
+  assert.ok(opts.keepAliveMaxTimeout >= opts.keepAliveTimeout);
+});
+
 test("loadUndici loads the npm undici package with Agent and fetch", () => {
   const undici = loadUndici();
   assert.equal(typeof undici.Agent, "function");
+  assert.equal(typeof undici.RetryAgent, "function");
   assert.equal(typeof undici.fetch, "function");
   assert.equal(typeof undici.setGlobalDispatcher, "function");
+});
+
+test("hop retry policy retries connect ETIMEDOUT on POST for minutes", () => {
+  const opts = hopRetryAgentOptions();
+  assert.equal(opts.errorCodes.includes("ETIMEDOUT"), true);
+  assert.equal(opts.errorCodes.includes("UND_ERR_CONNECT_TIMEOUT"), true);
+  assert.equal(opts.methods.includes("POST"), true);
+  assert.ok(opts.maxRetries * CONNECT_TIMEOUT_MS >= 60_000);
+});
+
+test("createHopDispatcher is a RetryAgent so connect ETIMEDOUT is retried", () => {
+  const undici = loadUndici();
+  assert.equal(typeof undici.RetryAgent, "function");
+  const dispatcher = createHopDispatcher();
+  assert.equal(dispatcher instanceof undici.RetryAgent, true);
+});
+
+test("RetryAgent with hop retry options retries POST after ETIMEDOUT", async () => {
+  const undici = loadUndici();
+  let attempts = 0;
+  class FailThenOk extends undici.Dispatcher {
+    dispatch(opts, handler) {
+      attempts += 1;
+      queueMicrotask(() => {
+        if (attempts === 1) {
+          const err = Object.assign(new Error("connect ETIMEDOUT 127.0.0.1:443"), {
+            code: "ETIMEDOUT",
+          });
+          handler.onResponseError({}, err);
+          return;
+        }
+        handler.onRequestStart?.({}, {});
+        handler.onResponseStart({}, 200, { "content-type": "text/plain" }, "OK");
+        handler.onResponseData?.({}, Buffer.from("ok"));
+        handler.onResponseEnd({}, {});
+      });
+      return true;
+    }
+    close() {
+      return Promise.resolve();
+    }
+    destroy() {
+      return Promise.resolve();
+    }
+  }
+  const retry = new undici.RetryAgent(new FailThenOk(), {
+    ...hopRetryAgentOptions(),
+    minTimeout: 1,
+    maxTimeout: 10,
+    maxRetries: 3,
+  });
+  const res = await retry.request({
+    origin: "http://hf-retry.test",
+    path: "/_matrix/client/v3/login",
+    method: "POST",
+    body: "{}",
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(attempts, 2);
+  await res.body.dump();
 });
 
 test("applyNodeNetworkPolicy installs the undici dispatcher instead of the 10s default fetch", () => {
   applyNodeNetworkPolicy();
   assert.equal(hopDispatcherReady(), true);
+  const undici = loadUndici();
+  assert.equal(typeof undici.Agent, "function");
 });
 
 test("pinnedFetch reaches a pinned hostname without OS DNS", async () => {
