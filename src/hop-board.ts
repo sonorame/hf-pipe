@@ -130,26 +130,15 @@ export function renderHopBoardHtml(): string {
   .cell { background: #161410; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
   .cell .k { color: var(--mute); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
   .cell .v { margin-top: 4px; font-variant-numeric: tabular-nums; word-break: break-all; }
-  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
-  button {
-    background: var(--btn);
-    color: var(--btn-ink);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 10px 16px;
-    font: inherit;
-    cursor: pointer;
-  }
-  button:hover { border-color: #5a5348; }
-  button:disabled { opacity: 0.45; cursor: default; }
-  button.primary { background: #243326; border-color: #3d5a40; color: var(--live); }
-  button.danger { background: #2a1c18; border-color: #6a3b2f; color: var(--down); }
   .log {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 16px;
     padding: 16px 18px;
-    min-height: 120px;
+    margin-top: 16px;
+    min-height: 220px;
+    max-height: 420px;
+    overflow: auto;
     white-space: pre-wrap;
     font-family: Consolas, "Courier New", monospace;
     font-size: 13px;
@@ -176,19 +165,16 @@ export function renderHopBoardHtml(): string {
       <div class="cell"><div class="k">epoch</div><div class="v" id="fEpoch">-</div></div>
     </div>
   </section>
-  <div class="actions">
-    <button class="primary" data-act="ping">Пинг</button>
-    <button data-act="doctor">Доктор</button>
-    <button data-act="recycle">Новый канал</button>
-    <button class="danger" data-act="restart">Перезапуск</button>
-  </div>
-  <div class="log" id="log">Жду статус демона.</div>
+  <div class="log" id="log">Жду события канала.</div>
 </div>
 <script>
 const logEl = document.getElementById("log");
 const hero = document.getElementById("hero");
-const btns = [...document.querySelectorAll("button[data-act]")];
-function setLog(t) { logEl.textContent = t; }
+let after = 0;
+let boot = true;
+function stamp(t) {
+  try { return new Date(t).toLocaleTimeString("ru-RU"); } catch { return ""; }
+}
 function paint(s) {
   const up = Boolean(s && s.rtc);
   hero.className = "hero " + (up ? "up" : "down");
@@ -202,48 +188,31 @@ function paint(s) {
   document.getElementById("fEpoch").textContent = s.epoch || "-";
   document.getElementById("tick").textContent = new Date().toLocaleTimeString("ru-RU");
 }
+function appendLines(rows) {
+  if (!rows || !rows.length) return;
+  if (boot) {
+    logEl.textContent = "";
+    boot = false;
+  }
+  for (const row of rows) {
+    const p = document.createElement("div");
+    p.textContent = stamp(row.t) + "  " + row.text;
+    logEl.appendChild(p);
+    after = Math.max(after, Number(row.id) || 0);
+  }
+  logEl.scrollTop = logEl.scrollHeight;
+}
 async function refresh() {
   try {
     const s = await fetch("/status").then((r) => r.json());
     paint(s);
+    const q = await fetch("/log?after=" + after).then((r) => r.json());
+    appendLines(q.lines || []);
   } catch (e) {
     paint({ rtc: false });
-    setLog("Демон не отвечает: " + (e.message || e));
+    if (boot) logEl.textContent = "Демон не отвечает: " + (e.message || e);
   }
 }
-async function act(action) {
-  btns.forEach((b) => { b.disabled = true; });
-  setLog(action === "doctor" ? "Доктор идет по швам..." : "Команда " + action + "...");
-  try {
-    const r = await fetch("/control", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    });
-    const j = await r.json();
-    if (action === "doctor") {
-      const lines = [];
-      lines.push((j.verdict || "?") + (j.culprit ? "  шов " + j.culprit : ""));
-      if (j.next) lines.push(j.next);
-      if (j.raw) lines.push("", j.raw.trim());
-      setLog(lines.join("\\n"));
-    } else if (action === "ping") {
-      const host = j.body && j.body.host ? j.body.host : "";
-      setLog(j.ok ? ("Пинг ок" + (host ? "  " + host : "")) : ("Пинг не прошел: " + (j.error || "rtc down")));
-    } else if (action === "recycle") {
-      setLog(j.ok ? ("Новый канал epoch " + (j.epoch || "") + " gen " + (j.gen || "")) : ("Не вышло: " + (j.error || r.status)));
-    } else if (action === "restart") {
-      setLog("Демон уходит на перезапуск. Страница сама дождется.");
-    } else {
-      setLog(JSON.stringify(j, null, 2));
-    }
-  } catch (e) {
-    setLog(String(e.message || e));
-  }
-  btns.forEach((b) => { b.disabled = false; });
-  await refresh();
-}
-btns.forEach((b) => b.addEventListener("click", () => act(b.getAttribute("data-act"))));
 refresh();
 setInterval(refresh, 2000);
 </script>

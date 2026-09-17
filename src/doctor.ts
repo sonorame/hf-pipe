@@ -35,3 +35,33 @@ export function formatDoctorLines(checks: DoctorCheck[]): string[] {
     return `${tag} ${c.name}${detail}`;
   });
 }
+
+export function nextDoctorHint(culprit: string | null, detail = ""): string {
+  if (!culprit) return "";
+  const d = String(detail || "");
+  if (culprit === "status" && /ECONNREFUSED/i.test(d)) {
+    return "Демон грязной не слушает 127.0.0.1:18765. hf.pid был живой процесс, но не hop. hop-up должен снять pidfile и запустить start-dirty.cmd. Это не чистая.";
+  }
+  if (culprit === "status") {
+    return "Демон грязной жив, RTC нет. На чистой оставь открытым start-clean.cmd, потом снова hop-up.cmd.";
+  }
+  if (culprit === "e2e") {
+    return "Локальный /status есть, ping до чистой не прошел. Проверь окно start-clean.cmd на чистой.";
+  }
+  if (culprit === "tcp443" || culprit === "versions" || culprit === "turn") {
+    return "Путь до mtx-1:443 флапает. Подожди минуту и снова hop-up.cmd. Не рестарти оба окна пачкой.";
+  }
+  if (culprit === "session") {
+    return "Нет matrix-session.json. На чистой start-clean.cmd сам сделает login, на грязной сессия уже должна лежать в .cursor\\secrets.";
+  }
+  if (culprit === "dns") {
+    return "DNS не отдал A mtx-1. Проверь сеть.";
+  }
+  if (culprit === "node") {
+    return "Нужен Node 20+ (C:\\Program Files\\nodejs\\node.exe).";
+  }
+  if (culprit === "scheduledTask") {
+    return "Нет задачи CursorMCP. На ручной запуск не влияет.";
+  }
+  return `Сломан шов ${culprit}.`;
+}

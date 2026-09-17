@@ -6,8 +6,9 @@ import {
   shouldAcceptRemoteOffer,
   localSdpReadyToSignal,
   rtcRecycleAction,
-  RTC_STUCK_HARD_MS,
 } from "../dist/rtc-retry.js";
+import { heartbeatShouldRecycle } from "../dist/hop-heartbeat.js";
+import { pushHopLog } from "../dist/hop-log.js";
 import { formatErrorChain } from "../dist/error-chain.js";
 
 const MAGIC = Buffer.from("HFP1");
@@ -35,6 +36,7 @@ let onRpc = null;
 let rtcStuckSince = 0;
 let lastRecreateAt = 0;
 let lastProofAt = 0;
+let dcOpenedAt = 0;
 const waiters = new Map();
 const parts = new Map();
 
@@ -161,13 +163,17 @@ function attachDc(channel, role) {
     if (dcOpen) return;
     dcOpen = true;
     outstandingOffer = false;
+    dcOpenedAt = Date.now();
+    lastProofAt = 0;
     log("rtc up", role, "state", dc.readyState);
+    pushHopLog("up", {}, "ok");
   };
   dc.onopen = onOpen;
   if (dc.readyState === "open") onOpen();
   dc.onclose = () => {
     dcOpen = false;
     log("rtc closed");
+    pushHopLog("down", {}, "warn");
   };
   dc.onerror = (err) => log("rtc dc err", err?.error || err);
   dc.onmessage = (ev) => {
@@ -310,9 +316,12 @@ export async function recycleRtcNow() {
   if (side !== "dirty") return { ok: false, error: "only dirty recycles" };
   if (offerCreateInFlight) return { ok: false, error: "offer in flight" };
   lastRecreateAt = Date.now();
+  lastProofAt = 0;
+  dcOpenedAt = 0;
   sessionEpoch = randomUUID();
   rtcStuckSince = Date.now();
   log("rtc board recycle epoch", sessionEpoch);
+  pushHopLog("recycle", { gen: sessionGen + 1 }, "warn");
   await startOfferer();
   return { ok: true, epoch: sessionEpoch, gen: sessionGen };
 }
@@ -377,12 +386,18 @@ function wirePc() {
   pc.onconnectionstatechange = () => {
     if (pc !== boundPc) return;
     log("rtc state", boundPc.connectionState);
-    if (["failed", "closed", "disconnected"].includes(boundPc.connectionState)) dcOpen = false;
+    if (["failed", "closed", "disconnected"].includes(boundPc.connectionState)) {
+      dcOpen = false;
+      if (boundPc.connectionState === "failed") pushHopLog("failed", {}, "warn");
+    }
   };
   pc.oniceconnectionstatechange = () => {
     if (pc !== boundPc) return;
     log("rtc ice", boundPc.iceConnectionState);
-    if (["failed", "closed", "disconnected"].includes(boundPc.iceConnectionState)) dcOpen = false;
+    if (["failed", "closed", "disconnected"].includes(boundPc.iceConnectionState)) {
+      dcOpen = false;
+      if (boundPc.iceConnectionState === "failed") pushHopLog("failed", {}, "warn");
+    }
   };
   pc.ondatachannel = (ev) => {
     if (pc !== boundPc) return;
@@ -436,7 +451,25 @@ export async function startRtc(opts) {
     await startOfferer();
     setInterval(() => {
       const now = Date.now();
-      if (isRtcUp() && (!lastProofAt || now - lastProofAt < RTC_STUCK_HARD_MS)) {
+      if (
+        heartbeatShouldRecycle({
+          rtcLooksUp: isRtcUp(),
+          lastPongAt: lastProofAt,
+          openedAt: dcOpenedAt,
+          now,
+        })
+      ) {
+        lastRecreateAt = now;
+        lastProofAt = 0;
+        dcOpenedAt = 0;
+        sessionEpoch = randomUUID();
+        rtcStuckSince = now;
+        log("rtc heartbeat miss - recreate peer epoch", sessionEpoch);
+        pushHopLog("pong-miss", {}, "warn");
+        startOfferer().catch((e) => log("rtc recreate", formatErrorChain(e)));
+        return;
+      }
+      if (isRtcUp()) {
         rtcStuckSince = 0;
         sendKeepalive();
         return;
@@ -447,15 +480,21 @@ export async function startRtc(opts) {
         stuckSinceMs: rtcStuckSince,
         now,
         lastRecreateAt,
+        connectionState: pc?.connectionState,
+        iceConnectionState: pc?.iceConnectionState,
       });
       if (action === "exit") {
         log("rtc stuck", now - rtcStuckSince, "ms - exit(7) for watchdog");
+        pushHopLog("restart", {}, "warn");
         process.exit(7);
       }
       if (action === "recreate") {
         lastRecreateAt = now;
+        lastProofAt = 0;
+        dcOpenedAt = 0;
         sessionEpoch = randomUUID();
         log("rtc stuck", now - rtcStuckSince, "ms - recreate peer epoch", sessionEpoch);
+        pushHopLog("recycle", { gen: sessionGen + 1 }, "warn");
         startOfferer().catch((e) => log("rtc recreate", formatErrorChain(e)));
         return;
       }
@@ -479,6 +518,7 @@ export async function startRtc(opts) {
     }, 4000);
   } else {
     log("rtc wait offer");
+    pushHopLog("wait");
   }
 }
 

@@ -59,11 +59,13 @@ test("board HTML is a live operator panel, not a desktop viewer", () => {
   const html = renderHopBoardHtml();
   assert.match(html, /<title>Hop<\/title>/);
   assert.match(html, /fetch\("\/status"\)/);
-  assert.match(html, /fetch\("\/control"/);
-  assert.match(html, /Пинг/);
-  assert.match(html, /Доктор/);
-  assert.match(html, /Новый канал/);
-  assert.match(html, /Перезапуск/);
+  assert.match(html, /fetch\("\/log\?after="/);
+  assert.match(html, /id="log"/);
+  assert.doesNotMatch(html, /data-act/);
+  assert.doesNotMatch(html, /Пинг/);
+  assert.doesNotMatch(html, /Доктор/);
+  assert.doesNotMatch(html, /Новый канал/);
+  assert.doesNotMatch(html, /Перезапуск/);
   assert.doesNotMatch(html, /\/view/);
   assert.doesNotMatch(html, /\/shot/);
   assert.doesNotMatch(html, /mouse/);
@@ -89,6 +91,7 @@ test("daemon HTTP serves the board and control", () => {
   assert.match(text, /kind === "board"/);
   assert.match(text, /renderHopBoardHtml/);
   assert.match(text, /kind === "control"/);
+  assert.match(text, /kind === "log"/);
   assert.match(text, /parseHopControl/);
   assert.equal(text.includes("hf-view.html"), false);
 });

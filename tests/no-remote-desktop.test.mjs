@@ -32,6 +32,7 @@ test("localhost HTTP is RPC plus operator board, no desktop viewer", () => {
   assert.equal(httpPageKind("POST", "/ask"), "ask");
   assert.equal(httpPageKind("GET", "/"), "board");
   assert.equal(httpPageKind("GET", "/index.html"), "board");
+  assert.equal(httpPageKind("GET", "/log"), "log");
   assert.equal(httpPageKind("POST", "/control"), "control");
   assert.equal(httpPageKind("GET", "/view"), "not_found");
   assert.equal(httpPageKind("GET", "/shot"), "not_found");

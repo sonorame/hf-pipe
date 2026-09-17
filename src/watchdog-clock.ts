@@ -13,7 +13,11 @@ export function shouldExitOnSyncDead(s: {
   lastOkMs: number;
   nowMs: number;
   deadMs: number;
+  rtcDownSinceMs?: number;
 }): boolean {
   if (s.rtcUp) return false;
-  return s.nowMs - s.lastOkMs > s.deadMs;
+  if (s.nowMs - s.lastOkMs <= s.deadMs) return false;
+  const downSince = Number(s.rtcDownSinceMs || 0);
+  if (downSince > 0 && s.nowMs - downSince <= s.deadMs) return false;
+  return true;
 }

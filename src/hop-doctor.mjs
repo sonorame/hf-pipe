@@ -11,7 +11,7 @@ import {
   rpcPort,
 } from "./config.mjs";
 import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
-import { summarizeDoctor, formatDoctorLines } from "../dist/doctor.js";
+import { summarizeDoctor, formatDoctorLines, nextDoctorHint } from "../dist/doctor.js";
 import { formatErrorChain } from "../dist/error-chain.js";
 
 loadEnvFile();
@@ -110,7 +110,13 @@ function scheduledTaskState() {
 
 async function main() {
   const checks = [];
-  const push = (name, ok, detail, skipped) => checks.push({ name, ok, detail, skipped });
+  const push = (name, ok, detail, skipped) => {
+    const c = { name, ok, detail, skipped };
+    checks.push(c);
+    console.log(formatDoctorLines([c])[0]);
+  };
+
+  console.log("доктор сторона", SIDE);
 
   const major = Number(process.versions.node.split(".")[0]);
   push("node", major >= 20, `${process.version} ${process.execPath}`);
@@ -130,10 +136,12 @@ async function main() {
     push("dns", false, `${host} ${e.code || e.message}`);
   }
 
-  const tcp = await tcpConnect(ip || host, 443, 8000, 3);
+  console.log("... tcp443 (до 10с)");
+  const tcp = await tcpConnect(ip || host, 443, 5000, 2);
   push("tcp443", tcp.ok, `${ip || host}:443 ${tcp.ok ? `ok ${tcp.ms}ms` : `fail ${tcp.err}`} try=${tcp.attempt}`);
 
   if (hs) {
+    console.log("... versions");
     try {
       const res = await pinnedFetch(`${hs}/_matrix/client/versions`);
       push("versions", res.status === 200, `HTTP ${res.status}`);
@@ -141,6 +149,7 @@ async function main() {
       push("versions", false, formatErrorChain(e));
     }
 
+    console.log("... turn");
     try {
       const res = await pinnedFetch(`${hs}/_matrix/client/v3/voip/turnServer`, {
         headers: { Authorization: `Bearer ${session?.access_token || ""}` },
@@ -174,6 +183,7 @@ async function main() {
     }
 
     if (statusOk) {
+      console.log("... e2e ping до чистой (до 20с)");
       try {
         const r = await localHttp("POST", "/ask", { id: `doc${Date.now().toString(16)}`, type: "ping", body: {} }, 20000);
         const j = JSON.parse(r.text);
@@ -193,9 +203,11 @@ async function main() {
   push("scheduledTask", task.ok, `CursorMCP ${task.state}`);
 
   const summary = summarizeDoctor(checks);
-  for (const line of formatDoctorLines(checks)) console.log(line);
   console.log("");
   console.log(JSON.stringify({ side: SIDE, ...summary }));
+  const hint = nextDoctorHint(summary.culprit, checks.find((c) => c.name === summary.culprit)?.detail || "");
+  if (hint) console.log("NEXT", hint);
+  else if (summary.verdict === "GREEN") console.log("NEXT канал жив end-to-end");
   process.exit(summary.verdict === "GREEN" ? 0 : 1);
 }
 

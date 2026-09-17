@@ -31,6 +31,7 @@ import {
   renderHopBoardHtml,
   shapeHopStatus,
 } from "../dist/hop-board.js";
+import { pushHopLog, readHopLogAfter } from "../dist/hop-log.js";
 
 loadEnvFile();
 applyNodeNetworkPolicy();
@@ -478,6 +479,11 @@ function startDirtyHttp() {
       );
       return;
     }
+    if (kind === "log") {
+      const after = Number(url.searchParams.get("after") || 0);
+      jsonRes(res, 200, { lines: readHopLogAfter(after) });
+      return;
+    }
     if (kind === "control") {
       readJsonBody(req)
         .then(async (body) => {
@@ -640,18 +646,23 @@ async function bootForever(session) {
 
 function watchSync(client) {
   let lastOk = Date.now();
+  let rtcDownSince = 0;
   client.on("sync", (state) => {
     if (state === "SYNCING" || state === "PREPARED" || state === "CATCHUP") lastOk = Date.now();
     if (state !== "SYNCING") log("sync", state);
   });
   const deadMs = Number(process.env.HF_SYNC_DEAD_MS || 120000);
   setInterval(() => {
+    const rtcUp = Boolean(rtcMod?.isRtcUp?.());
+    if (rtcUp) rtcDownSince = 0;
+    else if (!rtcDownSince) rtcDownSince = Date.now();
     if (
       !shouldExitOnSyncDead({
-        rtcUp: Boolean(rtcMod?.isRtcUp?.()),
+        rtcUp,
         lastOkMs: lastOk,
         nowMs: Date.now(),
         deadMs,
+        rtcDownSinceMs: rtcDownSince,
       })
     ) {
       return;
@@ -695,6 +706,7 @@ async function daemon() {
     ensureDir(join(DIRTY_LOCAL, "outbox"));
     log("DIRTY local", DIRTY_LOCAL);
     startDirtyHttp();
+    pushHopLog("wait");
   }
   log("session", session.user_id, session.device_id, "to-device", EVENT_TYPE);
   const client = await bootForever(session);

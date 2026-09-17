@@ -38,6 +38,7 @@ export function httpPageKind(method, pathname) {
   if (m === "GET" && p === "/status") return "status";
   if (m === "POST" && p === "/ask") return "ask";
   if (m === "GET" && (p === "/" || p === "/index.html")) return "board";
+  if (m === "GET" && p === "/log") return "log";
   if (m === "POST" && p === "/control") return "control";
   return "not_found";
 }

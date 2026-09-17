@@ -101,6 +101,15 @@ export const RTC_RECREATE_GAP_MS = 20_000;
 
 export type RtcRecycleAction = "none" | "recreate" | "exit";
 
+function rtcPeerFailed(s: {
+  connectionState?: string;
+  iceConnectionState?: string;
+}): boolean {
+  const conn = String(s.connectionState || "");
+  const ice = String(s.iceConnectionState || "");
+  return conn === "failed" || ice === "failed";
+}
+
 export function rtcRecycleAction(s: {
   dcOpen: boolean;
   stuckSinceMs: number;
@@ -109,15 +118,20 @@ export function rtcRecycleAction(s: {
   hardMs?: number;
   lastRecreateAt?: number;
   recreateGapMs?: number;
+  connectionState?: string;
+  iceConnectionState?: string;
 }): RtcRecycleAction {
-  if (s.dcOpen) return "none";
-  if (!s.stuckSinceMs) return "none";
-  const stuck = s.now - s.stuckSinceMs;
+  const failed = rtcPeerFailed(s);
+  if (s.dcOpen && !failed) return "none";
+  if (!s.stuckSinceMs && !failed) return "none";
+  const stuck = s.stuckSinceMs ? s.now - s.stuckSinceMs : 0;
   const hard = s.hardMs ?? RTC_STUCK_HARD_MS;
-  if (stuck >= hard) return "exit";
+  if (s.stuckSinceMs && stuck >= hard) return "exit";
+  const gap = s.recreateGapMs ?? RTC_RECREATE_GAP_MS;
+  const last = s.lastRecreateAt ?? 0;
+  if (last && s.now - last < gap) return "none";
+  if (failed) return "recreate";
   const soft = s.softMs ?? RTC_STUCK_SOFT_MS;
   if (stuck < soft) return "none";
-  const gap = s.recreateGapMs ?? RTC_RECREATE_GAP_MS;
-  if (s.now - (s.lastRecreateAt ?? 0) < gap) return "none";
   return "recreate";
 }

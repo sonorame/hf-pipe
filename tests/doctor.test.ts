@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeDoctor, formatDoctorLines } from "../src/doctor.js";
+import { summarizeDoctor, formatDoctorLines, nextDoctorHint } from "../src/doctor.js";
 
 test("all checks ok is GREEN with no culprit", () => {
   const r = summarizeDoctor([
@@ -50,4 +50,20 @@ test("each line is prefixed GREEN/RED/SKIP with the check name", () => {
     "RED   tcp443 timeout",
     "SKIP  scheduledTask n/a on clean",
   ]);
+});
+
+test("ECONNREFUSED on status points at the dirty daemon, not clean", () => {
+  const h = nextDoctorHint("status", "local /status connect ECONNREFUSED 127.0.0.1:18765");
+  assert.match(h, /18765/);
+  assert.match(h, /грязн/i);
+  assert.doesNotMatch(h, /start-clean/i);
+});
+
+test("rtc=false on status points at the clean window", () => {
+  const h = nextDoctorHint("status", "rtc=false pid=1 side=dirty");
+  assert.match(h, /start-clean/i);
+});
+
+test("GREEN has an empty hint", () => {
+  assert.equal(nextDoctorHint(null), "");
 });

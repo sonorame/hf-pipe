@@ -304,6 +304,21 @@ test("healthy open datachannel is never recycled", () => {
   );
 });
 
+test("ICE failed recycles even if the datachannel flag is still open", () => {
+  assert.equal(
+    rtcRecycleAction({
+      dcOpen: true,
+      connectionState: "failed",
+      iceConnectionState: "failed",
+      stuckSinceMs: 1_000,
+      now: 2_000,
+      lastRecreateAt: 0,
+      recreateGapMs: 20_000,
+    }),
+    "recreate",
+  );
+});
+
 test("no stuck timestamp yet does nothing", () => {
   assert.equal(
     rtcRecycleAction({ dcOpen: false, stuckSinceMs: 0, now: 500_000 }),
@@ -367,6 +382,7 @@ test("rtc-pipe wires the recycle escalation on the offerer", async () => {
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/rtc-pipe.mjs", import.meta.url), "utf8");
   assert.match(src, /rtcRecycleAction/);
+  assert.match(src, /heartbeatShouldRecycle/);
   assert.match(src, /process\.exit\(7\)/);
   assert.match(src, /recreate peer epoch/);
 });
