@@ -59,11 +59,18 @@ test("ECONNREFUSED on status points at the dirty daemon, not clean", () => {
   assert.doesNotMatch(h, /start-clean/i);
 });
 
-test("rtc=false on status points at the clean window", () => {
+test("rtc=false on status waits for the clean daemon, not a person", () => {
   const h = nextDoctorHint("status", "rtc=false pid=1 side=dirty");
-  assert.match(h, /start-clean/i);
+  assert.match(h, /сам/);
+  assert.doesNotMatch(h, /hop-up/i);
 });
 
 test("GREEN has an empty hint", () => {
   assert.equal(nextDoctorHint(null), "");
+});
+
+test("missing CursorMCP is a real hole, not a skippable hint", () => {
+  const h = nextDoctorHint("scheduledTask", "The system cannot find the file specified.");
+  assert.match(h, /CursorMCP/);
+  assert.doesNotMatch(h, /не влияет/);
 });
