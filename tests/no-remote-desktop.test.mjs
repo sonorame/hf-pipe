@@ -27,10 +27,12 @@ test("CLI and screenshot stay; remote input is gone", () => {
   assert.equal(DROPPED_INPUT_JOBS.includes("shell"), false);
 });
 
-test("localhost HTTP is RPC only: no live page, no /shot", () => {
+test("localhost HTTP is RPC plus operator board, no desktop viewer", () => {
   assert.equal(httpPageKind("GET", "/status"), "status");
   assert.equal(httpPageKind("POST", "/ask"), "ask");
-  assert.equal(httpPageKind("GET", "/"), "not_found");
+  assert.equal(httpPageKind("GET", "/"), "board");
+  assert.equal(httpPageKind("GET", "/index.html"), "board");
+  assert.equal(httpPageKind("POST", "/control"), "control");
   assert.equal(httpPageKind("GET", "/view"), "not_found");
   assert.equal(httpPageKind("GET", "/shot"), "not_found");
 });

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync, exists
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import http from "http";
+import { spawn } from "child_process";
 import {
   loadEnvFile,
   sessionFile,
@@ -23,6 +24,13 @@ import { isFreshPeer, pickPeerFromDevices, resolvePeerId } from "../dist/peer-de
 import { runCleanJob } from "./clean-jobs.mjs";
 import { httpPageKind } from "./hop-surface.mjs";
 import { readHotfolderTempConfig, sweepAllTemp } from "./hotfolder-temp.mjs";
+import {
+  hopRestartDelayMs,
+  parseDoctorStdout,
+  parseHopControl,
+  renderHopBoardHtml,
+  shapeHopStatus,
+} from "../dist/hop-board.js";
 
 loadEnvFile();
 applyNodeNetworkPolicy();
@@ -354,6 +362,7 @@ function writeDirtyResult(frame) {
 
 let rtcHandler = null;
 let rtcMod = null;
+let doctorRunning = false;
 
 function rpcTimeoutMs(frame) {
   const t = String(frame.type || "").toLowerCase();
@@ -363,34 +372,132 @@ function rpcTimeoutMs(frame) {
   return ((Number(body.timeout) || 12) + 3) * 1000;
 }
 
+function jsonRes(res, code, body) {
+  res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
+  res.end(JSON.stringify(body));
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (!raw.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function runDoctorFromBoard() {
+  if (doctorRunning) return Promise.resolve({ ok: false, error: "doctor already running", verdict: "RED" });
+  doctorRunning = true;
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(HERE, "hop-doctor.mjs")], {
+      cwd: HERE,
+      env: { ...process.env, HF_SIDE: "dirty" },
+      windowsHide: true,
+    });
+    let out = "";
+    child.stdout?.on("data", (c) => {
+      out += String(c);
+    });
+    child.stderr?.on("data", (c) => {
+      out += String(c);
+    });
+    child.on("exit", (code) => {
+      doctorRunning = false;
+      resolve({ ok: code === 0, raw: out, ...parseDoctorStdout(out) });
+    });
+    child.on("error", (e) => {
+      doctorRunning = false;
+      resolve({
+        ok: false,
+        error: String(e.message || e),
+        verdict: "RED",
+        failing: ["doctor"],
+        culprit: "doctor",
+        next: "",
+        raw: out,
+      });
+    });
+  });
+}
+
+async function runBoardControl(action) {
+  if (action === "restart") {
+    setTimeout(() => process.exit(7), hopRestartDelayMs());
+    return { ok: true, action: "restart" };
+  }
+  if (action === "doctor") {
+    return runDoctorFromBoard();
+  }
+  if (action === "recycle") {
+    if (!rtcMod?.recycleRtcNow) return { ok: false, error: "rtc module down" };
+    return rtcMod.recycleRtcNow();
+  }
+  if (action === "ping") {
+    if (!rtcMod?.isRtcUp?.()) return { ok: false, error: "rtc down" };
+    const result = await rtcMod.rtcCall({ id: `board${Date.now().toString(16)}`, type: "ping", body: {} }, 20000);
+    persistDirtyResult(result, { queue: false });
+    return result;
+  }
+  return { ok: false, error: "unknown" };
+}
+
 function startDirtyHttp() {
   const port = rpcPort();
   const bind = rpcBind();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
     const kind = httpPageKind(req.method, url.pathname);
+    if (kind === "board") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(renderHopBoardHtml());
+      return;
+    }
     if (kind === "status") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ rtc: Boolean(rtcMod?.isRtcUp?.()), pid: process.pid, side: sideNow() }));
+      const snap = rtcMod?.rtcSnapshot?.() || {};
+      jsonRes(
+        res,
+        200,
+        shapeHopStatus({
+          rtc: Boolean(rtcMod?.isRtcUp?.()),
+          pid: process.pid,
+          side: sideNow(),
+          ...snap,
+        }),
+      );
+      return;
+    }
+    if (kind === "control") {
+      readJsonBody(req)
+        .then(async (body) => {
+          const action = parseHopControl(body);
+          if (!action) {
+            jsonRes(res, 400, { ok: false, error: "bad action" });
+            return;
+          }
+          const result = await runBoardControl(action);
+          jsonRes(res, result.ok === false && action !== "doctor" ? 503 : 200, result);
+        })
+        .catch((e) => jsonRes(res, 400, { ok: false, error: String(e.message || e) }));
       return;
     }
     if (kind === "ask") {
-      const chunks = [];
-      req.on("data", (c) => chunks.push(c));
-      req.on("end", () => {
-        (async () => {
-          let task;
-          try {
-            task = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          } catch {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: false, error: "bad json" }));
-            return;
-          }
+      readJsonBody(req)
+        .then(async (task) => {
           const timeout = Number(req.headers["x-timeout"] || url.searchParams.get("timeout") || rpcTimeoutMs(task));
           if (!rtcMod?.isRtcUp?.()) {
-            res.writeHead(503, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: false, error: "rtc down" }));
+            jsonRes(res, 503, { ok: false, error: "rtc down" });
             return;
           }
           const result = await rtcMod.rtcCall(task, timeout);
@@ -398,13 +505,12 @@ function startDirtyHttp() {
           if (blob && result.body && typeof result.body === "object") {
             result.body.blob_b64 = blob;
           }
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(result));
-        })().catch((e) => {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: String(e.message || e) }));
+          jsonRes(res, 200, result);
+        })
+        .catch((e) => {
+          const msg = String(e.message || e);
+          jsonRes(res, /JSON/i.test(msg) ? 400 : 500, { ok: false, error: /JSON/i.test(msg) ? "bad json" : msg });
         });
-      });
       return;
     }
     res.writeHead(404);

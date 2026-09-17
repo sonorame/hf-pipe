@@ -295,6 +295,28 @@ export function isRtcUp() {
   );
 }
 
+export function rtcSnapshot() {
+  return {
+    dc: dc?.readyState || "none",
+    connection: pc?.connectionState || "none",
+    ice: pc?.iceConnectionState || "none",
+    signaling: pc?.signalingState || "none",
+    gen: sessionGen,
+    epoch: sessionEpoch || null,
+  };
+}
+
+export async function recycleRtcNow() {
+  if (side !== "dirty") return { ok: false, error: "only dirty recycles" };
+  if (offerCreateInFlight) return { ok: false, error: "offer in flight" };
+  lastRecreateAt = Date.now();
+  sessionEpoch = randomUUID();
+  rtcStuckSince = Date.now();
+  log("rtc board recycle epoch", sessionEpoch);
+  await startOfferer();
+  return { ok: true, epoch: sessionEpoch, gen: sessionGen };
+}
+
 export async function rtcCall(task, timeoutMs = 30000) {
   if (!isRtcUp()) throw new Error("rtc down");
   const rpcId = (Math.floor(Math.random() * 0x7fffffff) ^ Date.now()) >>> 0;
