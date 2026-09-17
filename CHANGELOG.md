@@ -1,5 +1,14 @@
 # История изменений
 
+## 1.4.0
+
+- Стабильный bootstrap запускает versioned release и откатывает повторно падающий current на previous.
+- Release содержит полный manifest, SHA-256 и подпись Ed25519; закрытый ключ защищен Windows DPAPI.
+- Matrix supervisor и WebRTC worker разделены локальным IPC. Shell, файлы и screenshot не переходят на Matrix.
+- Одна задача `HFPipe-<side>` запускается при входе Windows, работает от батареи и не имеет лимита времени.
+- Панель `127.0.0.1:18764` показывает обе машины, build, Matrix, RTC, ошибки и счетчики операций.
+- Matrix refresh token защищен DPAPI и обновляется без повторного интерактивного входа.
+
 ## 1.3.6
 
 - Сессия hop только `~/.hf-pipe/secrets`, не общая с Matrix MCP.

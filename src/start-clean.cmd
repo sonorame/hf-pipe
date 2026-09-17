@@ -1,7 +1,11 @@
 @echo off
 chcp 65001 >nul
 setlocal
-cd /d "%~dp0.."
+if exist "%~dp0bootstrap.mjs" (
+  cd /d "%~dp0"
+) else (
+  cd /d "%~dp0.."
+)
 echo Leave this window open.
 echo If Element asks to confirm device hf-matrix - confirm it.
 echo.
@@ -23,8 +27,11 @@ if not exist "%USERPROFILE%\.hf-pipe\secrets\matrix-session.json" (
   )
 )
 :loop
-"%NODE%" src\ensure-hop-dist.mjs
-"%NODE%" src\index.mjs clean
+if exist "bootstrap.mjs" (
+  "%NODE%" bootstrap.mjs clean
+) else (
+  "%NODE%" src\index.mjs clean
+)
 set "EC=%ERRORLEVEL%"
 if "%EC%"=="2" (
   echo hop already running

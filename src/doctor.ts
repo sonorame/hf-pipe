@@ -40,7 +40,7 @@ export function nextDoctorHint(culprit: string | null, detail = ""): string {
   if (!culprit) return "";
   const d = String(detail || "");
   if (culprit === "status" && /ECONNREFUSED/i.test(d)) {
-    return "Демон грязной не слушает 127.0.0.1:18765. CursorMCP поднимет его сам.";
+    return "Worker грязной не слушает 127.0.0.1:18765. HFPipe-dirty поднимет его сам.";
   }
   if (culprit === "status") {
     return "Демон грязной жив, RTC нет. Демон чистой сам соберет трубу.";
@@ -61,13 +61,10 @@ export function nextDoctorHint(culprit: string | null, detail = ""): string {
     return "Нужен Node 20+ (C:\\Program Files\\nodejs\\node.exe).";
   }
   if (culprit === "scheduledTask") {
-    return "Нет задачи CursorMCP. Демон не поднимется сам после падения.";
+    return "Нет задачи HFPipe. Supervisor не поднимется сам после входа.";
   }
   if (culprit === "scheduledTaskLogon") {
-    return "Нет задачи CursorMCPLogon. После входа демон сам не поднимется.";
-  }
-  if (culprit === "dist") {
-    return "Нет собранного dist (hop-board). Демон сам допишет его перед стартом.";
+    return "У задачи HFPipe нет logon-триггера.";
   }
   return `Сломан шов ${culprit}.`;
 }

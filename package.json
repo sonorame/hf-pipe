@@ -1,6 +1,6 @@
 {
   "name": "hf-pipe",
-  "version": "1.3.6",
+  "version": "1.4.0",
   "private": true,
   "description": "Cross-host remote control when direct TCP is blocked: Matrix to-device signaling and WebRTC TURN/TCP RPC.",
   "type": "module",
@@ -17,6 +17,9 @@
     "login": "node src/login.mjs",
     "doctor": "node src/hop-doctor.mjs",
     "diagnose": "node src/diagnose.mjs",
+    "release:build": "node scripts/build-release.mjs",
+    "release:deploy": "node scripts/deploy-release.mjs",
+    "soak": "node scripts/soak-live.mjs",
     "mcp": "node src/hf-clean-mcp.mjs"
   },
   "dependencies": {

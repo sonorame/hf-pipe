@@ -2,11 +2,7 @@ import net from "node:net";
 import dnsPromises from "node:dns/promises";
 import http from "node:http";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { missingDistModules } from "./ensure-hop-dist.mjs";
+import { readFileSync } from "node:fs";
 import {
   loadEnvFile,
   sessionFile,
@@ -22,8 +18,6 @@ loadEnvFile();
 applyNodeNetworkPolicy();
 
 const SIDE = (process.env.HF_SIDE || "dirty").toLowerCase();
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = existsSync(join(HERE, "package.json")) ? HERE : join(HERE, "..");
 
 function loadJson(path, fallback) {
   try {
@@ -100,7 +94,7 @@ function localHttp(method, path, body, timeoutMs) {
   });
 }
 
-function scheduledTaskState(name = "CursorMCP") {
+function scheduledTaskState(name) {
   try {
     const out = execFileSync("schtasks", ["/query", "/tn", name, "/fo", "LIST"], {
       encoding: "utf8",
@@ -126,9 +120,6 @@ async function main() {
 
   const major = Number(process.versions.node.split(".")[0]);
   push("node", major >= 20, `${process.version} ${process.execPath}`);
-
-  const missing = missingDistModules(ROOT);
-  push("dist", missing.length === 0, missing.length ? missing.join(",") : "ok");
 
   const session = loadJson(sessionFile(), null);
   const hs = hsFrom(session);
@@ -208,12 +199,10 @@ async function main() {
     push("e2e", true, "run from dirty", true);
   }
 
-  const task = scheduledTaskState("CursorMCP");
-  push("scheduledTask", task.ok, `CursorMCP ${task.state}`);
-  const logon = scheduledTaskState("CursorMCPLogon");
-  const startupLnk = join(homedir(), "AppData", "Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "CursorMCP.lnk");
-  const logonOk = logon.ok || existsSync(startupLnk);
-  push("scheduledTaskLogon", logonOk, logon.ok ? `CursorMCPLogon ${logon.state}` : existsSync(startupLnk) ? "startup lnk" : logon.state);
+  const taskName = `HFPipe-${SIDE}`;
+  const task = scheduledTaskState(taskName);
+  push("scheduledTask", task.ok, `${taskName} ${task.state}`);
+  push("scheduledTaskLogon", task.ok, task.ok ? `${taskName} logon` : task.state);
 
   const summary = summarizeDoctor(checks);
   console.log("");

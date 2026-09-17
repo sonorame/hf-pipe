@@ -1,0 +1,165 @@
+import { createHash, sign as signBytes, verify as verifyBytes } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
+
+const MANIFEST = "release-manifest.json";
+const IMPORT_RE = /\b(?:import|export)\s+(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']/g;
+
+function slash(path) {
+  return path.split(sep).join("/");
+}
+
+function filesUnder(root, dir = root) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...filesUnder(root, path));
+    else if (entry.isFile() && entry.name !== MANIFEST) out.push(slash(relative(root, path)));
+  }
+  return out.sort();
+}
+
+function sha256(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function canonical(manifest) {
+  const unsigned = { ...manifest };
+  delete unsigned.signature;
+  return Buffer.from(JSON.stringify(unsigned));
+}
+
+function assertInside(root, path) {
+  const rel = relative(root, path);
+  if (rel.startsWith("..") || resolve(path) === resolve(root) && rel === "..") {
+    throw new Error(`import escapes release: ${path}`);
+  }
+}
+
+function validateImports(root) {
+  for (const rel of filesUnder(root).filter((name) => /\.(?:mjs|js)$/.test(name))) {
+    const sourcePath = join(root, rel);
+    const source = readFileSync(sourcePath, "utf8");
+    IMPORT_RE.lastIndex = 0;
+    let match;
+    while ((match = IMPORT_RE.exec(source))) {
+      const spec = match[1];
+      if (!spec.startsWith(".")) continue;
+      const target = resolve(dirname(sourcePath), spec);
+      assertInside(root, target);
+      if (!existsSync(target) || !statSync(target).isFile()) {
+        throw new Error(`missing import ${spec} from ${rel}`);
+      }
+    }
+  }
+}
+
+export function buildReleaseManifest(root, options) {
+  const files = filesUnder(root).map((path) => ({
+    path,
+    size: statSync(join(root, path)).size,
+    sha256: sha256(join(root, path)),
+  }));
+  const manifest = {
+    format: 1,
+    buildId: String(options.buildId),
+    protocolVersion: Number(options.protocolVersion),
+    createdAt: options.createdAt || new Date().toISOString(),
+    entrypoint: "src/index.mjs",
+    files,
+  };
+  const signature = signBytes(null, canonical(manifest), options.privateKey).toString("base64");
+  const signed = { ...manifest, signature: { algorithm: "Ed25519", value: signature } };
+  writeFileSync(join(root, MANIFEST), `${JSON.stringify(signed, null, 2)}\n`);
+  return signed;
+}
+
+export function verifyRelease(root, options) {
+  const manifest = JSON.parse(readFileSync(join(root, MANIFEST), "utf8"));
+  if (manifest.signature?.algorithm !== "Ed25519" || !manifest.signature?.value) {
+    throw new Error("release signature missing");
+  }
+  const valid = verifyBytes(
+    null,
+    canonical(manifest),
+    options.publicKey,
+    Buffer.from(manifest.signature.value, "base64"),
+  );
+  if (!valid) throw new Error("release signature invalid");
+  if (
+    options.expectedProtocolVersion != null &&
+    manifest.protocolVersion !== Number(options.expectedProtocolVersion)
+  ) {
+    throw new Error(`protocol mismatch ${manifest.protocolVersion}`);
+  }
+  for (const file of manifest.files || []) {
+    const path = resolve(root, file.path);
+    assertInside(root, path);
+    if (!existsSync(path) || statSync(path).size !== file.size || sha256(path) !== file.sha256) {
+      throw new Error(`hash mismatch ${file.path}`);
+    }
+  }
+  const actual = filesUnder(root);
+  const listed = (manifest.files || []).map((file) => file.path).sort();
+  if (JSON.stringify(actual) !== JSON.stringify(listed)) throw new Error("release file list mismatch");
+  validateImports(root);
+  return manifest;
+}
+
+function readState(runtimeRoot) {
+  try {
+    return JSON.parse(readFileSync(join(runtimeRoot, "state.json"), "utf8"));
+  } catch {
+    return { current: null, previous: null, bad: [], failures: {} };
+  }
+}
+
+function writeState(runtimeRoot, state) {
+  mkdirSync(runtimeRoot, { recursive: true });
+  const path = join(runtimeRoot, "state.json");
+  const temp = `${path}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
+  renameSync(temp, path);
+  return state;
+}
+
+export function promoteRelease(runtimeRoot, releaseId) {
+  const id = String(releaseId);
+  if (!existsSync(join(runtimeRoot, "releases", id))) throw new Error(`release not found ${id}`);
+  const state = readState(runtimeRoot);
+  if ((state.bad || []).includes(id)) throw new Error(`release is marked bad ${id}`);
+  if (state.current === id) return state;
+  return writeState(runtimeRoot, {
+    ...state,
+    previous: state.current || null,
+    current: id,
+    failures: { ...(state.failures || {}), [id]: 0 },
+  });
+}
+
+export function recordReleaseFailure(runtimeRoot, releaseId, options = {}) {
+  const id = String(releaseId);
+  const threshold = Math.max(1, Number(options.threshold || 3));
+  const state = readState(runtimeRoot);
+  const failures = { ...(state.failures || {}) };
+  failures[id] = Number(failures[id] || 0) + 1;
+  const next = {
+    ...state,
+    failures,
+    lastFailure: { releaseId: id, reason: String(options.reason || "failed"), at: new Date().toISOString() },
+  };
+  if (state.current === id && failures[id] >= threshold && state.previous) {
+    next.current = state.previous;
+    next.previous = null;
+    next.bad = [...new Set([...(state.bad || []), id])];
+  }
+  return writeState(runtimeRoot, next);
+}

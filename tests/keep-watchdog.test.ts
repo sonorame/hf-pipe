@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const keepJs = readFileSync(join(here, "../src/keep.js"), "utf8");
 const cmd = readFileSync(join(here, "../src/install-watchdog.cmd"), "utf8");
 const ps1 = readFileSync(join(here, "../src/install-watchdog.ps1"), "utf8");
+const host = readFileSync(join(here, "../src/supervisor-host.ps1"), "utf8");
 
 test("keep.js starts keep-loop.mjs, not a one-shot index.mjs", () => {
   assert.match(keepJs, /keep-loop\.mjs/);
@@ -21,29 +22,27 @@ test("keep.js treats keep-loop.mjs and run.mjs as the live supervisor", () => {
   assert.match(keepJs, /if \(cmd\.indexOf\("keep-loop\.mjs"\) >= 0 \|\| cmd\.indexOf\("run\.mjs"\) >= 0\)/);
 });
 
-test("keep-loop.mjs restarts hop after any exit, including already-running", () => {
+test("keep-loop delegates to signed bootstrap without generating dist", () => {
   const loopSrc = readFileSync(join(here, "../src/keep-loop.mjs"), "utf8");
-  assert.match(loopSrc, /setTimeout\(start,\s*4000\)/);
-  assert.doesNotMatch(loopSrc, /process\.exit\(2\)/);
-  assert.match(loopSrc, /spawn\(process\.execPath,\s*\[ENTRY,\s*side\]/);
-  assert.match(loopSrc, /\.hf-pipe/);
-  assert.match(loopSrc, /logs/);
-  assert.match(loopSrc, /windowsHide:\s*true/);
-  assert.match(loopSrc, /openSync\(/);
-  assert.doesNotMatch(loopSrc, /stdio:\s*"inherit"/);
-  assert.doesNotMatch(loopSrc, /createWriteStream\([^)]*flags:\s*["']a["']/);
+  assert.match(loopSrc, /runBootstrap/);
+  assert.match(loopSrc, /HF_RUNTIME_ROOT/);
+  assert.doesNotMatch(loopSrc, /ensure-hop-dist|ensureHopDist|writeFile/);
 });
 
-test("install-watchdog launches keep.js every minute and at logon", () => {
-  assert.match(cmd, /keep\.js/);
-  assert.match(cmd, /\/MO 1/);
-  assert.match(cmd, /ONLOGON/);
-  assert.match(cmd, /CursorMCPLogon/);
-  assert.match(cmd, /schtasks CursorMCPLogon failed/);
-  assert.match(cmd, /CursorMCP\.lnk/);
-  assert.doesNotMatch(cmd, /Create \/TN "CursorMCPLogon"[^\n]*2>&1/);
-  assert.match(ps1, /keep\.js/);
-  assert.match(ps1, /schtasks/);
-  assert.match(ps1, /DontStopIfGoingOnBatteries|AllowStartIfOnBatteries/);
-  assert.doesNotMatch(ps1, /src\/index\.mjs/);
+test("install-watchdog creates one tracked interactive supervisor task", () => {
+  assert.match(cmd, /install-watchdog\.ps1/);
+  assert.match(ps1, /New-ScheduledTaskTrigger\s+-AtLogOn/);
+  assert.match(ps1, /supervisor-host\.ps1/);
+  assert.match(ps1, /RestartCount/);
+  assert.match(ps1, /RestartInterval/);
+  assert.match(ps1, /StartWhenAvailable/);
+  assert.match(ps1, /AllowStartIfOnBatteries/);
+  assert.match(ps1, /DontStopIfGoingOnBatteries/);
+  assert.match(ps1, /ExecutionTimeLimit/);
+  assert.match(ps1, /MultipleInstances\s+IgnoreNew/);
+  assert.doesNotMatch(ps1, /\/SC MINUTE|Register-ScheduledTask[\s\S]*-TaskName\s+["']?CursorMCP|keep\.js/);
+  assert.match(ps1, /Remove-Item[\s\S]*-Force/);
+  assert.match(host, /bootstrap\.mjs/);
+  assert.match(host, /Start-Process[\s\S]*-Wait/);
+  assert.match(host, /Start-Sleep -Seconds 4/);
 });

@@ -1,46 +1,62 @@
 param(
   [ValidateSet("dirty", "clean")]
-  [string]$Side = "dirty"
+  [string]$Side = "dirty",
+  [string]$Root = $PSScriptRoot
 )
 
 $ErrorActionPreference = "Stop"
-$Src = Split-Path -Parent $MyInvocation.MyCommand.Path
-$keep = Join-Path $Src "keep.js"
-if (-not (Test-Path -LiteralPath $keep)) { throw "missing $keep" }
-$tr = "wscript.exe //nologo `"$keep`" $Side"
+if (-not (Test-Path -LiteralPath (Join-Path $Root "bootstrap.mjs"))) {
+  $Root = Split-Path -Parent $PSScriptRoot
+}
+$hostScript = Join-Path $Root "supervisor-host.ps1"
+if (-not (Test-Path -LiteralPath $hostScript)) { throw "missing $hostScript" }
 
-foreach ($old in @("hf-dirty-health", "hf-clean-health", "hf-dirty-logon", "hf-clean-logon")) {
-  cmd /c "schtasks /Delete /TN `"$old`" /F" | Out-Null
+$taskName = "HFPipe-$Side"
+foreach ($old in @(
+  "hf-dirty-health", "hf-clean-health", "hf-dirty-logon", "hf-clean-logon",
+  "CursorMCP", "CursorMCPLogon", "HFPipe-dirty", "HFPipe-clean"
+)) {
+  Unregister-ScheduledTask -TaskName $old -Confirm:$false -ErrorAction SilentlyContinue
 }
 
-cmd /c "schtasks /Delete /TN CursorMCP /F" | Out-Null
-cmd /c "schtasks /Create /TN CursorMCP /TR `"$tr`" /SC MINUTE /MO 1 /RL LIMITED /IT /F"
-if ($LASTEXITCODE -ne 0) { throw "schtasks CursorMCP failed" }
-cmd /c "schtasks /Delete /TN CursorMCPLogon /F" | Out-Null
-cmd /c "schtasks /Create /TN CursorMCPLogon /TR `"$tr`" /SC ONLOGON /RL LIMITED /IT /F"
-if ($LASTEXITCODE -ne 0) {
-  Write-Output "schtasks CursorMCPLogon failed"
-  $startup = [Environment]::GetFolderPath("Startup")
-  $lnk = Join-Path $startup "CursorMCP.lnk"
-  $w = New-Object -ComObject WScript.Shell
-  $s = $w.CreateShortcut($lnk)
-  $s.TargetPath = "wscript.exe"
-  $s.Arguments = "//nologo `"$keep`" $Side"
-  $s.WorkingDirectory = $Src
-  $s.WindowStyle = 7
-  $s.Save()
-  Write-Output "startup lnk $lnk"
-}
+$userId = if ($env:USERDOMAIN) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
+$action = New-ScheduledTaskAction `
+  -Execute "powershell.exe" `
+  -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$hostScript`" -Side $Side -Root `"$Root`"" `
+  -WorkingDirectory $Root
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
+$principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet `
+  -RestartCount 999 `
+  -RestartInterval (New-TimeSpan -Minutes 1) `
+  -StartWhenAvailable `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -ExecutionTimeLimit ([TimeSpan]::Zero) `
+  -MultipleInstances IgnoreNew
 
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-foreach ($n in @("CursorMCP", "CursorMCPLogon")) {
-  try { Set-ScheduledTask -TaskName $n -Settings $settings | Out-Null } catch {}
-}
+Register-ScheduledTask `
+  -TaskName $taskName `
+  -Action $action `
+  -Trigger $trigger `
+  -Principal $principal `
+  -Settings $settings `
+  -Description "Autonomous hf-pipe $Side supervisor" `
+  -Force | Out-Null
 
 $startup = [Environment]::GetFolderPath("Startup")
-foreach ($old in @("hf-dirty.lnk", "hf-clean.lnk")) {
+foreach ($old in @("hf-dirty.lnk", "hf-clean.lnk", "CursorMCP.lnk")) {
   $p = Join-Path $startup $old
   if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
 }
 
-Write-Output "ok CursorMCP $Side keep.js"
+if ($Side -eq "dirty") {
+  $boardShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "hf-pipe status.url"
+  Set-Content -LiteralPath $boardShortcut -Encoding ASCII -Value @(
+    "[InternetShortcut]",
+    "URL=http://127.0.0.1:18764/"
+  )
+}
+
+Start-ScheduledTask -TaskName $taskName
+Write-Output "ok $taskName supervisor"

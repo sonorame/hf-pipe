@@ -15,6 +15,7 @@ import {
   findMatrixClientModule,
   sessionUserId,
   peerNameNeedles,
+  secretsDir,
 } from "./config.mjs";
 import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
 import { shouldRecycleAfterClockJump, shouldExitOnSyncDead } from "../dist/watchdog-clock.js";
@@ -32,9 +33,26 @@ import {
   shapeHopStatus,
 } from "../dist/hop-board.js";
 import { pushHopLog, readHopLogAfter } from "../dist/hop-log.js";
+import { spawnRtcWorker } from "./rtc-worker-client.mjs";
+import { decorateControlFrame, validateControlFrame } from "./protocol-version.mjs";
+import { downloadReleaseMedia, stageReleaseArchive } from "./release-transfer.mjs";
+import { promoteRelease } from "./release-runtime.mjs";
+import {
+  loadSessionRefreshToken,
+  protectSessionRefreshToken,
+  refreshSession,
+} from "./session-auth.mjs";
+import { protectDpapiText } from "./release-key.mjs";
 
 loadEnvFile();
 applyNodeNetworkPolicy();
+process.send?.({
+  kind: "supervisor-health",
+  phase: "booted",
+  buildId: process.env.HF_BUILD_ID || "dev",
+  protocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+  pid: process.pid,
+});
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EVENT_TYPE = eventType();
@@ -44,6 +62,18 @@ const POLL_MS = 700;
 
 const sessionPath = sessionFile();
 let userId = "";
+let lastMatrixSyncAt = 0;
+let lastError = null;
+const traffic = {
+  matrixTxMessages: 0,
+  matrixTxBytes: 0,
+  matrixRxMessages: 0,
+  matrixRxBytes: 0,
+  rtcOperations: 0,
+  rtcTxBytes: 0,
+  rtcRxBytes: 0,
+  recent: [],
+};
 
 function sideNow() {
   return (process.env.HF_SIDE || "dirty").toLowerCase();
@@ -82,8 +112,15 @@ function pidAlive(pid) {
 
 let pidHeld = false;
 
+function hopPidPath() {
+  const root = process.env.HF_RUNTIME_ROOT || join(HERE, "..");
+  const runDir = join(root, "run");
+  mkdirSync(runDir, { recursive: true });
+  return join(runDir, `hf-${sideNow()}.pid`);
+}
+
 function claimThisHop() {
-  const pidPath = join(HERE, "hf.pid");
+  const pidPath = hopPidPath();
   const result = claimHopInstance({
     pidPath,
     pid: process.pid,
@@ -107,7 +144,7 @@ function claimThisHop() {
 function clearPid() {
   if (!pidHeld) return;
   try {
-    unlinkSync(join(HERE, "hf.pid"));
+    unlinkSync(hopPidPath());
   } catch {
     // ignore
   }
@@ -125,7 +162,35 @@ process.on("SIGTERM", () => {
 });
 
 function log(...args) {
+  const text = args.map((value) => value?.message || String(value)).join(" ");
+  if (/(?:fail|error|dead|disabled|timeout|rejected|mismatch)/i.test(text)) {
+    lastError = { at: new Date().toISOString(), text: text.slice(0, 500) };
+  }
   console.error(new Date().toISOString(), ...args);
+}
+
+function operationPath(task) {
+  const body = task?.body && typeof task.body === "object" ? task.body : {};
+  return String(body.path || body.cwd || body.root || "").slice(0, 260);
+}
+
+function recordOperation(task, startedAt, result) {
+  const tx = Buffer.byteLength(JSON.stringify(task || {}));
+  const rx = Buffer.byteLength(JSON.stringify(result || {}));
+  traffic.rtcOperations += 1;
+  traffic.rtcTxBytes += tx;
+  traffic.rtcRxBytes += rx;
+  traffic.recent.push({
+    at: new Date().toISOString(),
+    side: sideNow(),
+    type: String(task?.type || "unknown"),
+    path: operationPath(task),
+    durationMs: Date.now() - startedAt,
+    txBytes: tx,
+    rxBytes: rx,
+    ok: Boolean(result?.ok ?? result?.body?.ok),
+  });
+  if (traffic.recent.length > 30) traffic.recent.splice(0, traffic.recent.length - 30);
 }
 
 function loadJson(path, fallback) {
@@ -299,11 +364,14 @@ async function bootClient(session) {
 
 async function sendFrame(client, lane, frame) {
   const myDevice = client.getDeviceId?.() || process.env.MATRIX_DEVICE_ID;
-  const env = { hf: 1, lane, frame, from: myDevice };
+  const outgoing = lane === "rtc" || lane === "control" ? decorateControlFrame(frame) : frame;
+  const env = { hf: 1, lane, frame: outgoing, from: myDevice };
   const raw = JSON.stringify(env);
   if (raw.length > MAX_EVENT) {
     throw new Error(`frame ${frame.id} too large (${raw.length} > ${MAX_EVENT})`);
   }
+  traffic.matrixTxMessages += 1;
+  traffic.matrixTxBytes += Buffer.byteLength(raw);
   const peer = await resolvePeerDevice(myDevice);
   const txn = `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 8)}`;
   const url = `${hsBase()}/_matrix/client/v3/sendToDevice/${encodeURIComponent(EVENT_TYPE)}/${txn}`;
@@ -365,6 +433,99 @@ let rtcHandler = null;
 let rtcMod = null;
 let doctorRunning = false;
 const rtcSeenIds = new Set();
+const CONTROL_TYPES = new Set([
+  "health",
+  "release-stage",
+  "release-staged",
+  "release-activate",
+  "release-activated",
+]);
+
+async function observedCleanJob(task) {
+  const startedAt = Date.now();
+  try {
+    const result = await runCleanJob(task);
+    recordOperation(task, startedAt, result);
+    return result;
+  } catch (error) {
+    recordOperation(task, startedAt, { ok: false, error: error.message || String(error) });
+    throw error;
+  }
+}
+
+async function observedRtcCall(frame, timeoutMs) {
+  const startedAt = Date.now();
+  try {
+    const result = await rtcMod.rtcCall(frame, timeoutMs);
+    recordOperation(frame, startedAt, result);
+    return result;
+  } catch (error) {
+    recordOperation(frame, startedAt, { ok: false, error: error.message || String(error) });
+    throw error;
+  }
+}
+
+async function handleControl(frame, client) {
+  const compatible = validateControlFrame(frame);
+  if (!compatible.ok) {
+    log("control protocol", compatible.reason, compatible.remoteBuildId);
+    return;
+  }
+  if (!CONTROL_TYPES.has(String(frame.type || ""))) {
+    log("control rejected", frame.type || "unknown");
+    return;
+  }
+  const runtimeRoot = process.env.HF_RUNTIME_ROOT || join(HERE, "..");
+  if (sideNow() === "dirty" && frame.type === "health") {
+    saveJson(join(DIRTY_LOCAL, "peer-health.json"), {
+      ...frame,
+      receivedAt: new Date().toISOString(),
+    });
+    return;
+  }
+  if (sideNow() === "dirty" && ["release-staged", "release-activated"].includes(frame.type)) {
+    saveJson(join(DIRTY_LOCAL, "control", `${frame.id}.json`), frame);
+    return;
+  }
+  if (sideNow() !== "clean") return;
+  if (frame.type === "release-stage") {
+    const archivePath = join(runtimeRoot, "incoming", `${frame.buildId}.zip`);
+    await downloadReleaseMedia({
+      homeserver: process.env.MATRIX_HOMESERVER_URL,
+      accessToken: process.env.MATRIX_ACCESS_TOKEN,
+      mxc: frame.mxc,
+      archivePath,
+      expectedSha256: frame.sha256,
+      fetchFn: pinnedFetch,
+    });
+    const publicKey = readFileSync(join(runtimeRoot, "release-public.pem"), "utf8");
+    const staged = stageReleaseArchive({
+      archivePath,
+      runtimeRoot,
+      publicKey,
+      expectedProtocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+      expectedSha256: frame.sha256,
+    });
+    await sendFrame(client, "control", {
+      id: frame.id,
+      type: "release-staged",
+      buildId: staged.buildId,
+      ok: true,
+    });
+    return;
+  }
+  if (frame.type === "release-activate") {
+    promoteRelease(runtimeRoot, frame.buildId);
+    await sendFrame(client, "control", {
+      id: frame.id,
+      type: "release-activated",
+      buildId: frame.buildId,
+      ok: true,
+    });
+    const delay = Math.max(0, Number(frame.activateAt || Date.now()) - Date.now());
+    setTimeout(() => process.exit(7), delay);
+  }
+}
 
 function rpcTimeoutMs(frame) {
   const t = String(frame.type || "").toLowerCase();
@@ -448,7 +609,7 @@ async function runBoardControl(action) {
   }
   if (action === "ping") {
     if (!rtcMod?.isRtcUp?.()) return { ok: false, error: "rtc down" };
-    const result = await rtcMod.rtcCall({ id: `board${Date.now().toString(16)}`, type: "ping", body: {} }, 20000);
+    const result = await observedRtcCall({ id: `board${Date.now().toString(16)}`, type: "ping", body: {} }, 20000);
     persistDirtyResult(result, { queue: false });
     return result;
   }
@@ -507,7 +668,7 @@ function startDirtyHttp() {
             jsonRes(res, 503, { ok: false, error: "rtc down" });
             return;
           }
-          const result = await rtcMod.rtcCall(task, timeout);
+          const result = await observedRtcCall(task, timeout);
           const blob = persistDirtyResult(result, { queue: false });
           if (blob && result.body && typeof result.body === "object") {
             result.body.blob_b64 = blob;
@@ -533,11 +694,25 @@ function startDirtyHttp() {
 
 async function handleEnvelope(env, client, seen) {
   if (!env?.lane || !env.frame) return;
+  traffic.matrixRxMessages += 1;
+  traffic.matrixRxBytes += Buffer.byteLength(JSON.stringify(env));
   if (typeof env.from === "string" && env.from.trim()) {
     incomingPeer = env.from.trim();
   }
   const frame = env.frame;
+  if (env.lane === "control") {
+    await handleControl(frame, client);
+    return;
+  }
   if (env.lane === "rtc") {
+    const compatible = validateControlFrame(frame);
+    if (!compatible.ok) {
+      log("rtc protocol", compatible.reason, compatible.remoteBuildId);
+      pushHopLog("protocol-mismatch", {
+        text: `${compatible.reason} build=${compatible.remoteBuildId}`,
+      }, "warn");
+      return;
+    }
     const rid = String(frame.id || "");
     if (rid) {
       if (rtcSeenIds.has(rid)) return;
@@ -551,20 +726,8 @@ async function handleEnvelope(env, client, seen) {
   if (!fid) return;
   const side = sideNow();
   if (side === "clean" && env.lane === "d2c") {
-    if (seen.frames.has(`d2c:${fid}`)) return;
-    seen.frames.add(`d2c:${fid}`);
-    const one = await runCleanJob(frame);
-    const result = {
-      id: fid,
-      type: "result",
-      ok: Boolean(one.ok),
-      body: { id: fid, ...one },
-      req: frame.type,
-    };
-    await sendFrame(client, "c2d", result);
-    seen.frames.add(`c2d:${fid}`);
-    saveSeen(seen);
-    log("done d2c", fid, frame.type || "", one.ok);
+    log("matrix rpc rejected", fid, frame.type || "");
+    return;
   }
   if (side === "dirty" && env.lane === "c2d") {
     if (seen.frames.has(`c2d:${fid}`)) return;
@@ -593,17 +756,14 @@ async function pumpOutgoing(client, seen, cleanRoot) {
       const key = `d2c:${frame.id}`;
       if (seen.frames.has(key)) continue;
       if (rtcMod?.isRtcUp?.()) {
-        const result = await rtcMod.rtcCall(frame, rpcTimeoutMs(frame));
+        const result = await observedRtcCall(frame, rpcTimeoutMs(frame));
         writeDirtyResult(result);
         seen.frames.add(key);
         saveSeen(seen);
         consumeFile(path);
         continue;
       }
-      await sendFrame(client, "d2c", frame);
-      seen.frames.add(key);
-      saveSeen(seen);
-      consumeFile(path);
+      break;
     }
     return;
   }
@@ -622,8 +782,12 @@ async function pumpOutgoing(client, seen, cleanRoot) {
 
 async function loadSessionForever() {
   for (;;) {
-    const session = loadJson(sessionPath, null);
+    let session = loadJson(sessionPath, null);
     if (session?.access_token) {
+      if (session.refresh_token && process.platform === "win32") {
+        session = protectSessionRefreshToken(session, secretsDir());
+        saveJson(sessionPath, session);
+      }
       if (!session.user_id) session.user_id = sessionUserId(session);
       if (!session.user_id) {
         log("session has no user_id, wait 5s", sessionPath);
@@ -639,11 +803,35 @@ async function loadSessionForever() {
 }
 
 async function bootForever(session) {
+  let lastRefreshAt = 0;
   for (;;) {
     try {
+      if (session.expires_at && Number(session.expires_at) <= Date.now() + 60_000) {
+        throw new Error("access token expires");
+      }
       return await bootClient(session);
     } catch (e) {
       log("boot retry", formatErrorChain(e));
+      const authFailure = /401|unknown[_ -]?token|access token|token expires/i.test(formatErrorChain(e));
+      if (authFailure && Date.now() - lastRefreshAt > 60_000) {
+        lastRefreshAt = Date.now();
+        try {
+          const refreshed = await refreshSession(session, {
+            loadRefreshToken: (value) => loadSessionRefreshToken(value, secretsDir()),
+            fetchFn: pinnedFetch,
+            protectRefreshToken: (token) => {
+              protectDpapiText(token, join(secretsDir(), "matrix-refresh.dpapi"));
+              return "matrix-refresh.dpapi";
+            },
+          });
+          Object.assign(session, refreshed);
+          saveJson(sessionPath, session);
+          log("Matrix token refreshed");
+          continue;
+        } catch (refreshError) {
+          log("Matrix login required", formatErrorChain(refreshError));
+        }
+      }
       await sleep(8000);
       const fresh = loadJson(sessionPath, session);
       if (fresh?.access_token) Object.assign(session, fresh);
@@ -653,9 +841,13 @@ async function bootForever(session) {
 
 function watchSync(client) {
   let lastOk = Date.now();
+  lastMatrixSyncAt = lastOk;
   let rtcDownSince = 0;
   client.on("sync", (state) => {
-    if (state === "SYNCING" || state === "PREPARED" || state === "CATCHUP") lastOk = Date.now();
+    if (state === "SYNCING" || state === "PREPARED" || state === "CATCHUP") {
+      lastOk = Date.now();
+      lastMatrixSyncAt = lastOk;
+    }
     if (state !== "SYNCING") log("sync", state);
   });
   const deadMs = Number(process.env.HF_SYNC_DEAD_MS || 120000);
@@ -735,19 +927,76 @@ async function daemon() {
     if (event.getType?.() === EVENT_TYPE) onToDevice(event);
   });
 
-  log("daemon up");
   try {
-    const rtc = await import(pathToFileURL(join(HERE, "rtc-pipe.mjs")).href);
-    rtcMod = rtc;
-    rtcHandler = rtc.handleRtcSignal;
-    rtc.startRtc({
+    rtcMod = spawnRtcWorker({
+      entry: join(HERE, "rtc-worker.mjs"),
+      cwd: join(HERE, ".."),
+      env: process.env,
       side,
-      sendSignal: (frame) => sendFrame(client, "rtc", frame),
+      onSignal: (frame) => sendFrame(client, "rtc", frame),
+      onStatus: () => {},
       log,
-      onRpc: side === "clean" ? (task) => runCleanJob(task) : null,
-    }).catch((e) => log("rtc", formatErrorChain(e)));
+      onRpc: side === "clean" ? observedCleanJob : null,
+    });
+    rtcHandler = rtcMod.handleRtcSignal;
   } catch (e) {
     log("rtc disabled", formatErrorChain(e));
+  }
+  log("daemon up");
+  process.send?.({
+    kind: "supervisor-health",
+    phase: "ready",
+    buildId: process.env.HF_BUILD_ID || "dev",
+    protocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+    pid: process.pid,
+  });
+  const reportSupervisor = () => {
+    const snapshot = rtcMod?.rtcSnapshot?.() || {};
+    const peer = side === "dirty" ? loadJson(join(DIRTY_LOCAL, "peer-health.json"), null) : null;
+    process.send?.({
+      kind: "supervisor-health",
+      phase: "running",
+      local: {
+        host: process.env.COMPUTERNAME || "",
+        side,
+        buildId: process.env.HF_BUILD_ID || "dev",
+        protocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+        pid: process.pid,
+        uptimeSec: Math.round(process.uptime()),
+        matrixSyncAgeMs: lastMatrixSyncAt ? Date.now() - lastMatrixSyncAt : null,
+        rtc: Boolean(rtcMod?.isRtcUp?.()),
+        ...snapshot,
+        lastError,
+        traffic,
+      },
+      peer,
+    });
+  };
+  reportSupervisor();
+  setInterval(reportSupervisor, 2000);
+  if (side === "clean") {
+    const sendHealth = () => {
+      const snapshot = rtcMod?.rtcSnapshot?.() || {};
+      sendFrame(client, "control", {
+        id: `health-${Date.now()}`,
+        type: "health",
+        host: process.env.COMPUTERNAME || "",
+        side,
+        buildId: process.env.HF_BUILD_ID || "dev",
+        pid: process.pid,
+        uptimeSec: Math.round(process.uptime()),
+        rtc: Boolean(rtcMod?.isRtcUp?.()),
+        dc: snapshot.dc || "none",
+        connection: snapshot.connection || "none",
+        ice: snapshot.ice || "none",
+        signaling: snapshot.signaling || "none",
+        matrixSyncAgeMs: lastMatrixSyncAt ? Date.now() - lastMatrixSyncAt : null,
+        lastError,
+        traffic,
+      }).catch((error) => log("health", formatErrorChain(error)));
+    };
+    sendHealth();
+    setInterval(sendHealth, 15_000);
   }
   while (true) {
     try {
@@ -768,7 +1017,7 @@ async function sendPing() {
   userId = session.user_id;
   const client = await bootClient(session);
   const id = Math.random().toString(16).slice(2, 12);
-  await sendFrame(client, "d2c", { id, type: "ping", body: {} });
+  await sendFrame(client, "control", { id, type: "health", probe: true });
   log("ping", id);
   client.stopClient();
 }

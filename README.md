@@ -33,15 +33,21 @@ hf-pipe решает это без VPN и проброса портов:
 - Снимок удаленного экрана (`screenshot`).
 - Подключение к Cursor через встроенный MCP-сервер (`clean_*`).
 - Запуск вспомогательных скриптов на удаленном хосте (`clean_lab`).
-- Автоматический перезапуск процесса и контроль зависания Matrix sync.
+- Автоматический перезапуск worker без разрыва Matrix control plane.
+- Подписанные Ed25519 release, атомарная активация и откат на предыдущую версию.
+- Локальная панель обеих сторон, журнал причин и счетчики операций.
 
 ```text
 Cursor / консоль
-        |  localhost HTTP 18765
-   хоп dirty (оператор)
-        |  Matrix to-device  (только обмен SDP / ICE)
-        |  WebRTC datachannel через TURN/TCP  (бинарный RPC)
-   хоп clean (удаленный хост)
+        |  localhost HTTP 18764/18765
+   supervisor dirty
+        |  Matrix to-device  (health, SDP / ICE, подписанный release)
+        |  локальный IPC
+   WebRTC worker dirty
+        |  WebRTC datachannel через TURN/TCP  (shell, файлы, screenshot)
+   WebRTC worker clean
+        |  локальный IPC
+   supervisor clean
         |  файловая система, shell, screenshot
    удаленная ОС
 ```
@@ -90,9 +96,11 @@ npm start -- clean
 npm start -- dirty
 ```
 
-Проверьте статус в браузере или через curl:
+Проверьте общую панель в браузере:
 
-`http://127.0.0.1:18765/status` -> поле `"rtc": true` означает, что туннель поднят.
+`http://127.0.0.1:18764/` показывает build, Matrix, RTC, последний сбой и операции обеих машин.
+
+API worker остается на `http://127.0.0.1:18765/status`; поле `"rtc": true` означает, что datachannel поднят.
 
 Проверка через консоль оператора:
 
@@ -111,11 +119,11 @@ scripts\start.cmd clean
 scripts\start.cmd dirty
 ```
 
-или через cmd-скрипты с циклом перезапуска:
+Для постоянной работы установите одну интерактивную задачу планировщика на каждой машине:
 
 ```bat
-src\start-clean.cmd
-src\start-dirty.cmd
+src\install-watchdog.cmd clean
+src\install-watchdog.cmd dirty
 ```
 
 Linux / macOS:
@@ -126,7 +134,7 @@ chmod +x scripts/start.sh
 ./scripts/start.sh dirty
 ```
 
-Скрипт `scripts/run.mjs` следит за процессом: при завершении ожидает 4 секунды и перезапускает Node. В Windows для автозапуска при входе в систему предусмотрен скрипт `src/install-watchdog.cmd` (создает задачу планировщика Windows от имени текущего интерактивного пользователя).
+Задачи `HFPipe-clean` и `HFPipe-dirty` запускают стабильный bootstrap после входа в Windows. Bootstrap проверяет подпись, hash и protocol version, следит за supervisor и откатывает release после повторного падения до `booted`.
 
 ## Запуск в Docker
 
@@ -174,9 +182,12 @@ docker-compose  Запуск контейнера с монтированием 
 | Путь | Назначение |
 |---|---|
 | `~/.hf-pipe/secrets/matrix-session.json` | Access token и идентификатор устройства |
+| `~/.hf-pipe/secrets/matrix-refresh.dpapi` | Refresh token, защищенный Windows DPAPI |
+| `~/.hf-pipe/keys/release-private.dpapi` | Закрытый ключ release только на dirty |
+| `<runtime>/releases/` | Неизменяемые signed release, current и previous |
 | `~/.hf-pipe/data/{dirty,clean}/` | Локальное состояние клиента Matrix |
 | `~/.hf-pipe/local/` | Очереди задач и сохраненные файлы screenshot на стороне оператора |
-| `~/.hf-pipe/logs/` | Журнал keep-loop и демона |
+| `<runtime>/logs/` | Журнал bootstrap, supervisor и worker |
 
 Сессия Matrix MCP в `~/.cursor/secrets` к hop не относится.
 
@@ -185,7 +196,7 @@ docker-compose  Запуск контейнера с монтированием 
 - RPC-сервер по умолчанию слушает только `127.0.0.1`. Не публикуйте порт 18765 в локальную сеть или интернет.
 - Файл `matrix-session.json` содержит access token учетной записи. Доступ к нему должен быть ограничен (права 0600 на Unix). В git он игнорируется.
 - ICE работает исключительно в режиме `relay` (только через TURN). Локальные и публичные адреса хостов не раскрываются.
-- Комнаты Matrix не используются для команд управления.
+- Matrix передает только health, RTC signaling и подписанные release. Shell, файлы и screenshot передаются только по WebRTC.
 
 ## Документация
 

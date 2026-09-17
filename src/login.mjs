@@ -10,8 +10,10 @@ import {
   homeserverUrl,
   oidcIssuer,
   deviceDisplayName,
+  secretsDir,
 } from "./config.mjs";
 import { applyNodeNetworkPolicy } from "../dist/network-policy.js";
+import { protectSessionRefreshToken } from "./session-auth.mjs";
 
 loadEnvFile();
 applyNodeNetworkPolicy();
@@ -232,6 +234,7 @@ async function main() {
     device_id: tokens.device_id,
   };
   session = await fillUserId(session);
+  session = protectSessionRefreshToken(session, secretsDir());
   saveJson(SESSION_PATH, session);
   console.error("Session saved:", SESSION_PATH);
   console.error("Next: npm start --", process.env.HF_SIDE || "clean");

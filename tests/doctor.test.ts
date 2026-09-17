@@ -69,26 +69,21 @@ test("GREEN has an empty hint", () => {
   assert.equal(nextDoctorHint(null), "");
 });
 
-test("missing CursorMCP is a real hole, not a skippable hint", () => {
+test("missing HFPipe task is a real hole, not a skippable hint", () => {
   const h = nextDoctorHint("scheduledTask", "The system cannot find the file specified.");
-  assert.match(h, /CursorMCP/);
+  assert.match(h, /HFPipe/);
   assert.doesNotMatch(h, /не влияет/);
 });
 
 test("missing logon task is a hole", () => {
   const h = nextDoctorHint("scheduledTaskLogon", "The system cannot find the file specified.");
-  assert.match(h, /CursorMCPLogon|входа/i);
+  assert.match(h, /HFPipe|logon/i);
 });
 
-test("missing dist points at ensure before start", () => {
-  const h = nextDoctorHint("dist", "hop-board.js");
-  assert.match(h, /dist/);
-  assert.match(h, /сам/);
-});
-
-test("doctor on dirty queries CursorMCPLogon", async () => {
+test("doctor queries the one side-specific HFPipe task", async () => {
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../src/hop-doctor.mjs", import.meta.url), "utf8");
-  assert.match(src, /CursorMCPLogon/);
+  assert.match(src, /HFPipe-\$\{SIDE\}/);
   assert.match(src, /scheduledTaskLogon/);
+  assert.doesNotMatch(src, /CursorMCP/);
 });
