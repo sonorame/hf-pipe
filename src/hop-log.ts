@@ -42,6 +42,24 @@ export function formatHopLogLine(kind: string, detail: Record<string, unknown> =
       return "Жду вторую сторону.";
     case "restart":
       return "Демон перезапускается сам.";
+    case "offer":
+      return gen ? `Оффер ушел. Попытка ${gen}.` : "Оффер ушел.";
+    case "no-answer": {
+      const sec = detail.sec == null || detail.sec === "" ? "" : String(detail.sec);
+      return sec ? `Ответа нет ${sec} с.` : "Ответа нет.";
+    }
+    case "answer":
+      return gen ? `Пришел ответ. Попытка ${gen}.` : "Пришел ответ.";
+    case "drop-gen": {
+      const remote = detail.remote == null ? "" : String(detail.remote);
+      const have = detail.have == null ? "" : String(detail.have);
+      if (remote && have) return `Ответ на чужую попытку ${remote}. У меня ${have}.`;
+      return "Ответ на чужую попытку.";
+    }
+    case "peer": {
+      const peer = detail.peer ? String(detail.peer) : "";
+      return peer ? `Пир ${peer}.` : "Пир неизвестен.";
+    }
     default:
       return String(detail.text || kind);
   }

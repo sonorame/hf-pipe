@@ -176,8 +176,9 @@ docker-compose  Запуск контейнера с монтированием 
 | `~/.hf-pipe/secrets/matrix-session.json` | Access token и идентификатор устройства |
 | `~/.hf-pipe/data/{dirty,clean}/` | Локальное состояние клиента Matrix |
 | `~/.hf-pipe/local/` | Очереди задач и сохраненные файлы screenshot на стороне оператора |
+| `~/.hf-pipe/logs/` | Журнал keep-loop и демона |
 
-Если на машине уже существовали каталоги `~/.cursor/secrets`, модуль конфигурации прочитает файл сессии и оттуда.
+Сессия Matrix MCP в `~/.cursor/secrets` к hop не относится.
 
 ## Безопасность
 

@@ -13,6 +13,24 @@ test("human lines do not talk about buttons", () => {
   assert.doesNotMatch(formatHopLogLine("up"), /Пинг|Доктор|Новый канал|Перезапуск/);
 });
 
+test("offer and missing answer are plain lines", () => {
+  assert.equal(formatHopLogLine("offer", { gen: 2 }), "Оффер ушел. Попытка 2.");
+  assert.equal(formatHopLogLine("no-answer", { sec: 20 }), "Ответа нет 20 с.");
+  assert.equal(formatHopLogLine("answer", { gen: 2 }), "Пришел ответ. Попытка 2.");
+  assert.equal(formatHopLogLine("drop-gen", { remote: 1, have: 4 }), "Ответ на чужую попытку 1. У меня 4.");
+  assert.equal(formatHopLogLine("peer", { peer: "DEV1" }), "Пир DEV1.");
+});
+
+test("rtc-pipe writes offer answer and drop to the board log", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/rtc-pipe.mjs", import.meta.url), "utf8");
+  assert.match(src, /pushHopLog\("offer"/);
+  assert.match(src, /pushHopLog\("no-answer"/);
+  assert.match(src, /pushHopLog\("answer"/);
+  assert.match(src, /pushHopLog\("drop-gen"/);
+  assert.match(src, /if \(was\) pushHopLog\("down"/);
+});
+
 test("ring returns only lines after the cursor", () => {
   resetHopLog();
   const a = pushHopLog("up");

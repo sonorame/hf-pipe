@@ -74,3 +74,21 @@ test("missing CursorMCP is a real hole, not a skippable hint", () => {
   assert.match(h, /CursorMCP/);
   assert.doesNotMatch(h, /не влияет/);
 });
+
+test("missing logon task is a hole", () => {
+  const h = nextDoctorHint("scheduledTaskLogon", "The system cannot find the file specified.");
+  assert.match(h, /CursorMCPLogon|входа/i);
+});
+
+test("missing dist points at ensure before start", () => {
+  const h = nextDoctorHint("dist", "hop-board.js");
+  assert.match(h, /dist/);
+  assert.match(h, /сам/);
+});
+
+test("doctor on dirty queries CursorMCPLogon", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/hop-doctor.mjs", import.meta.url), "utf8");
+  assert.match(src, /CursorMCPLogon/);
+  assert.match(src, /scheduledTaskLogon/);
+});

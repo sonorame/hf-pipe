@@ -1,5 +1,15 @@
 # История изменений
 
+## 1.3.6
+
+- Сессия hop только `~/.hf-pipe/secrets`, не общая с Matrix MCP.
+- Пока ждут ответ на оффер или DTLS после answer, 45с-рецикл не сносит gen. ICE completed без answer не "найден".
+- Журнал: оффер, нет ответа, ответ, drop gen. keep-loop пишет `~/.hf-pipe/logs/<side>.log`.
+- Ответ накладывается только после конца setLocalDescription.
+- keep-loop открывает журнал через openSync, иначе spawn на Windows падает и демона нет.
+- Задача CursorMCPLogon обязательна, задачи не стопаются на батарее.
+- Тег `hop-session-answer-2026-09-17`.
+
 ## 1.3.5
 
 - Планировщик CursorMCP при входе и каждую минуту запускает keep.js.

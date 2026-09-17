@@ -7,6 +7,7 @@ set HF_SIDE=dirty
 if not defined HF_TEMP_KEEP_MS set HF_TEMP_KEEP_MS=0
 if not defined HF_TEMP_SWEEP_MS set HF_TEMP_SWEEP_MS=30000
 :loop
+node src\ensure-hop-dist.mjs
 node src\index.mjs dirty
 set "EC=%ERRORLEVEL%"
 if "%EC%"=="2" (

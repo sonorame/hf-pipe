@@ -6,6 +6,7 @@ import {
   shouldAcceptRemoteOffer,
   localSdpReadyToSignal,
   rtcRecycleAction,
+  rtcRecycleMayStart,
 } from "../dist/rtc-retry.js";
 import { heartbeatShouldRecycle, heartbeatShouldLogPulse } from "../dist/hop-heartbeat.js";
 import { pushHopLog } from "../dist/hop-log.js";
@@ -40,6 +41,8 @@ let dcOpenedAt = 0;
 let lastPeerHost = "";
 let lastPulseLogAt = 0;
 let pulseInFlight = false;
+let lastNoAnswerLogAt = 0;
+let localDescOp = Promise.resolve();
 const waiters = new Map();
 const parts = new Map();
 
@@ -146,7 +149,10 @@ function emit(frame) {
 
 async function signalCreatedDescription(desc, sdpType) {
   const sld = pc.setLocalDescription(desc);
-  sld.catch((e) => log("rtc sld", formatErrorChain(e)));
+  localDescOp = sld.catch((e) => {
+    log("rtc sld", formatErrorChain(e));
+    throw e;
+  });
   const sdp = desc?.sdp || pc.localDescription?.sdp;
   if (!localSdpReadyToSignal({ alreadySignaled: false, sdp })) {
     throw new Error("local sdp empty");
@@ -174,9 +180,10 @@ function attachDc(channel, role) {
   dc.onopen = onOpen;
   if (dc.readyState === "open") onOpen();
   dc.onclose = () => {
+    const was = dcOpen;
     dcOpen = false;
     log("rtc closed");
-    pushHopLog("down", {}, "warn");
+    if (was) pushHopLog("down", {}, "warn");
   };
   dc.onerror = (err) => log("rtc dc err", err?.error || err);
   dc.onmessage = (ev) => {
@@ -432,7 +439,9 @@ async function startOfferer() {
     attachDc(pc.createDataChannel("hf"), "offerer");
     const offer = await pc.createOffer();
     await signalCreatedDescription(offer, "offer");
+    await localDescOp;
     log("rtc offerer", "gen", sessionGen, "epoch", sessionEpoch, "sdp", Buffer.byteLength(offer.sdp || pc.localDescription.sdp));
+    pushHopLog("offer", { gen: sessionGen });
   } finally {
     offerCreateInFlight = false;
   }
@@ -505,6 +514,15 @@ export async function startRtc(opts) {
         return;
       }
       if (!rtcStuckSince) rtcStuckSince = now;
+      if (
+        outstandingOffer &&
+        pc?.signalingState === "have-local-offer" &&
+        (!lastNoAnswerLogAt || now - lastNoAnswerLogAt >= 15_000)
+      ) {
+        lastNoAnswerLogAt = now;
+        const sec = Math.max(0, Math.round((now - lastOfferAt) / 1000));
+        pushHopLog("no-answer", { sec }, "warn");
+      }
       const action = rtcRecycleAction({
         dcOpen,
         stuckSinceMs: rtcStuckSince,
@@ -512,13 +530,18 @@ export async function startRtc(opts) {
         lastRecreateAt,
         connectionState: pc?.connectionState,
         iceConnectionState: pc?.iceConnectionState,
+        signalingState: pc?.signalingState,
+        outstandingOffer,
+        lastOfferAt,
       });
       if (action === "exit") {
+        if (!rtcRecycleMayStart({ offerCreateInFlight })) return;
         log("rtc stuck", now - rtcStuckSince, "ms - exit(7) for watchdog");
         pushHopLog("restart", {}, "warn");
         process.exit(7);
       }
       if (action === "recreate") {
+        if (!rtcRecycleMayStart({ offerCreateInFlight })) return;
         lastRecreateAt = now;
         lastProofAt = 0;
         dcOpenedAt = 0;
@@ -580,24 +603,34 @@ async function applyOffer(frame) {
   await flushIce();
   const answer = await pc.createAnswer();
   await signalCreatedDescription(answer, "answer");
+  await localDescOp;
   log("rtc got offer", "gen", sessionGen, "epoch", sessionEpoch);
 }
 
 async function applyAnswer(frame) {
   if (frame.epoch && sessionEpoch && frame.epoch !== sessionEpoch) {
     log("rtc drop gen", "answer", frame.gen, "have", sessionGen);
+    pushHopLog("drop-gen", { remote: frame.gen, have: sessionGen }, "warn");
     return;
   }
   if (frame.gen != null && frame.gen !== sessionGen) {
     log("rtc drop gen", "answer", frame.gen, "have", sessionGen);
+    pushHopLog("drop-gen", { remote: frame.gen, have: sessionGen }, "warn");
     return;
   }
   if (!pc) return;
+  if (pc.signalingState !== "have-local-offer") {
+    log("rtc skip answer", pc.signalingState);
+    return;
+  }
+  await localDescOp;
   await pc.setRemoteDescription({ type: "answer", sdp: frame.sdp });
   remoteDescSet = true;
   await flushIce();
   lastOfferAt = Date.now();
-  log("rtc got answer", "gen", sessionGen);
+  outstandingOffer = false;
+  log("rtc got answer", "gen", sessionGen, String(frame.sdp || "").match(/a=setup:\S+/)?.[0] || "");
+  pushHopLog("answer", { gen: sessionGen }, "ok");
 }
 
 async function applyIce(frame) {

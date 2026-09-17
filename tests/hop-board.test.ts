@@ -12,6 +12,7 @@ import {
   shapeHopStatus,
   formatHopCaption,
   formatHopField,
+  icePathIsLive,
 } from "../src/hop-board.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,6 +70,37 @@ test("caption tells age and peer host in plain russian", () => {
   assert.equal(formatHopField("connection", "new"), "старт");
 });
 
+test("local ICE completed before an answer is not a live path", () => {
+  assert.equal(
+    icePathIsLive({ ice: "completed", signaling: "have-local-offer", connection: "new" }),
+    false,
+  );
+  const s = shapeHopStatus({
+    rtc: false,
+    ice: "completed",
+    signaling: "have-local-offer",
+    connection: "new",
+    dc: "connecting",
+  });
+  assert.notEqual(s.iceText, "найден");
+  assert.equal(s.signalingText, "жду ответ");
+  assert.equal(s.connectionText, "старт");
+});
+
+test("ICE connected after a stable session is a live path", () => {
+  assert.equal(
+    icePathIsLive({ ice: "connected", signaling: "stable", connection: "connecting" }),
+    true,
+  );
+  const s = shapeHopStatus({
+    ice: "connected",
+    signaling: "stable",
+    connection: "connecting",
+  });
+  assert.equal(s.iceText, "найден");
+  assert.equal(s.signalingText, "есть");
+});
+
 test("board HTML is a live operator panel, not a desktop viewer", () => {
   const html = renderHopBoardHtml();
   assert.match(html, /<title>Hop<\/title>/);
@@ -77,6 +109,8 @@ test("board HTML is a live operator panel, not a desktop viewer", () => {
   assert.match(html, /id="log"/);
   assert.match(html, /id="caption"/);
   assert.match(html, /Труба/);
+  assert.match(html, /id="fSig"/);
+  assert.match(html, /Сигнал/);
   assert.doesNotMatch(html, /data-act/);
   assert.doesNotMatch(html, /Пинг/);
   assert.doesNotMatch(html, /Доктор/);

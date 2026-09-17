@@ -364,6 +364,7 @@ function writeDirtyResult(frame) {
 let rtcHandler = null;
 let rtcMod = null;
 let doctorRunning = false;
+const rtcSeenIds = new Set();
 
 function rpcTimeoutMs(frame) {
   const t = String(frame.type || "").toLowerCase();
@@ -537,6 +538,12 @@ async function handleEnvelope(env, client, seen) {
   }
   const frame = env.frame;
   if (env.lane === "rtc") {
+    const rid = String(frame.id || "");
+    if (rid) {
+      if (rtcSeenIds.has(rid)) return;
+      rtcSeenIds.add(rid);
+      if (rtcSeenIds.size > 400) rtcSeenIds.delete(rtcSeenIds.values().next().value);
+    }
     rtcHandler?.(frame);
     return;
   }
@@ -706,7 +713,6 @@ async function daemon() {
     ensureDir(join(DIRTY_LOCAL, "outbox"));
     log("DIRTY local", DIRTY_LOCAL);
     startDirtyHttp();
-    pushHopLog("wait");
   }
   log("session", session.user_id, session.device_id, "to-device", EVENT_TYPE);
   const client = await bootForever(session);
@@ -716,6 +722,7 @@ async function daemon() {
   try {
     const peer = await resolvePeerDevice(client.getDeviceId());
     log("peer device", peer);
+    pushHopLog("peer", { peer });
   } catch (e) {
     log("peer", formatErrorChain(e));
   }

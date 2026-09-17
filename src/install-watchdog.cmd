@@ -19,6 +19,11 @@ if errorlevel 1 (
   echo schtasks CursorMCP failed
   exit /b 1
 )
-schtasks /Create /TN "CursorMCPLogon" /TR "wscript.exe //nologo \"%~dp0keep.js\" %SIDE%" /SC ONLOGON /RL LIMITED /IT /F >nul 2>&1
+schtasks /Create /TN "CursorMCPLogon" /TR "wscript.exe //nologo \"%~dp0keep.js\" %SIDE%" /SC ONLOGON /RL LIMITED /IT /F
+if errorlevel 1 (
+  echo schtasks CursorMCPLogon failed
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$startup=[Environment]::GetFolderPath('Startup'); $lnk=Join-Path $startup 'CursorMCP.lnk'; $w=New-Object -ComObject WScript.Shell; $s=$w.CreateShortcut($lnk); $s.TargetPath='wscript.exe'; $s.Arguments='//nologo ""%~dp0keep.js"" %SIDE%'; $s.WorkingDirectory='%~dp0'; $s.WindowStyle=7; $s.Save(); Write-Output ('startup lnk ' + $lnk)"
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$names=@('CursorMCP','CursorMCPLogon'); foreach($n in $names){ try { $s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable; Set-ScheduledTask -TaskName $n -Settings $s | Out-Null } catch {} }"
 echo ok CursorMCP %SIDE% keep.js
 exit /b 0

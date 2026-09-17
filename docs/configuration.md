@@ -17,7 +17,7 @@ Access token, идентификатор пользователя и устро�
 
 | Переменная | Значение по умолчанию | Описание |
 |---|---|---|
-| `HF_SECRETS_DIR` | `~/.hf-pipe/secrets` (или `~/.cursor/secrets`, если каталог уже создан) | Каталог хранения файла сессии |
+| `HF_SECRETS_DIR` | `~/.hf-pipe/secrets` | Каталог хранения файла сессии hop. Не `~/.cursor/secrets`. |
 | `MATRIX_SESSION_FILE` | `{HF_SECRETS_DIR}/matrix-session.json` | Полный путь к файлу активной сессии Matrix |
 | `MATRIX_DATA_DIR` | `~/.hf-pipe/data/{side}` | Каталог локального состояния клиента Matrix |
 | `HF_LOCAL_DIR` | `~/.hf-pipe/local` | Каталог временных очередей и сохраненных screenshot на стороне оператора |

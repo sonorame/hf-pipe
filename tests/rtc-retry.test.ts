@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { shouldRetryRtcOffer, shouldReplaceRtcPeer, shouldAcceptRemoteOffer, localSdpReadyToSignal, rtcRecycleAction } from "../src/rtc-retry.js";
+import { shouldRetryRtcOffer, shouldReplaceRtcPeer, shouldAcceptRemoteOffer, localSdpReadyToSignal, rtcRecycleAction, rtcRecycleMayStart } from "../src/rtc-retry.js";
 
 test("open datachannel does not retry", () => {
   assert.equal(
@@ -363,6 +363,67 @@ test("stuck past soft but recently recreated waits out the gap", () => {
   );
 });
 
+test("waiting for an answer past soft still does not recreate before 90s", () => {
+  assert.equal(
+    rtcRecycleAction({
+      dcOpen: false,
+      stuckSinceMs: 1_000,
+      now: 50_000,
+      softMs: 45_000,
+      hardMs: 120_000,
+      lastOfferAt: 1_000,
+      outstandingOffer: true,
+      signalingState: "have-local-offer",
+      lastRecreateAt: 0,
+      recreateGapMs: 20_000,
+    }),
+    "none",
+  );
+});
+
+test("waiting for an answer past 90s may recreate", () => {
+  assert.equal(
+    rtcRecycleAction({
+      dcOpen: false,
+      stuckSinceMs: 1_000,
+      now: 95_000,
+      softMs: 45_000,
+      hardMs: 120_000,
+      lastOfferAt: 1_000,
+      outstandingOffer: true,
+      signalingState: "have-local-offer",
+      lastRecreateAt: 0,
+      recreateGapMs: 20_000,
+    }),
+    "recreate",
+  );
+});
+
+test("after answer while still connecting does not recreate before 90s", () => {
+  assert.equal(
+    rtcRecycleAction({
+      dcOpen: false,
+      stuckSinceMs: 1_000,
+      now: 50_000,
+      softMs: 45_000,
+      hardMs: 120_000,
+      lastOfferAt: 10_000,
+      outstandingOffer: false,
+      signalingState: "stable",
+      connectionState: "connecting",
+      iceConnectionState: "completed",
+      lastRecreateAt: 0,
+      recreateGapMs: 20_000,
+    }),
+    "none",
+  );
+});
+
+test("in-flight offerer does not start another recycle", () => {
+  assert.equal(rtcRecycleMayStart({ offerCreateInFlight: true }), false);
+  assert.equal(rtcRecycleMayStart({ offerCreateInFlight: false }), true);
+});
+
 test("stuck past the hard threshold exits for a full process restart", () => {
   assert.equal(
     rtcRecycleAction({
@@ -386,4 +447,7 @@ test("rtc-pipe wires the recycle escalation on the offerer", async () => {
   assert.match(src, /peerHost/);
   assert.match(src, /process\.exit\(7\)/);
   assert.match(src, /recreate peer epoch/);
+  assert.match(src, /rtcRecycleMayStart/);
+  assert.match(src, /await localDescOp/);
+  assert.match(src, /rtc skip answer/);
 });

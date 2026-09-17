@@ -71,4 +71,5 @@ test("index.mjs wires peer fallback and error cause", () => {
   assert.match(src, /resolvePeerId/);
   assert.match(src, /formatErrorChain/);
   assert.match(src, /from: myDevice/);
+  assert.match(src, /rtcSeenIds/);
 });

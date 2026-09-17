@@ -52,7 +52,7 @@ export function nextDoctorHint(culprit: string | null, detail = ""): string {
     return "Путь до mtx-1:443 флапает. Демон сам повторит, когда сеть вернется.";
   }
   if (culprit === "session") {
-    return "Нет matrix-session.json. На чистой start-clean.cmd сам сделает login, на грязной сессия уже должна лежать в .cursor\\secrets.";
+    return "Нет matrix-session.json. На чистой start-clean.cmd сам сделает login, на грязной сессия лежит в .hf-pipe\\secrets.";
   }
   if (culprit === "dns") {
     return "DNS не отдал A mtx-1. Проверь сеть.";
@@ -62,6 +62,12 @@ export function nextDoctorHint(culprit: string | null, detail = ""): string {
   }
   if (culprit === "scheduledTask") {
     return "Нет задачи CursorMCP. Демон не поднимется сам после падения.";
+  }
+  if (culprit === "scheduledTaskLogon") {
+    return "Нет задачи CursorMCPLogon. После входа демон сам не поднимется.";
+  }
+  if (culprit === "dist") {
+    return "Нет собранного dist (hop-board). Демон сам допишет его перед стартом.";
   }
   return `Сломан шов ${culprit}.`;
 }

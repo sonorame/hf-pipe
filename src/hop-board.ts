@@ -18,6 +18,7 @@ export type HopStatusView = {
   dcText: string;
   connectionText: string;
   iceText: string;
+  signalingText: string;
 };
 
 export type DoctorParse = {
@@ -31,7 +32,21 @@ export function hopRestartDelayMs(): number {
   return 250;
 }
 
-export function formatHopField(kind: "dc" | "connection" | "ice", value: string): string {
+export function icePathIsLive(s: {
+  ice?: string;
+  signaling?: string;
+  connection?: string;
+}): boolean {
+  const ice = String(s.ice || "").toLowerCase();
+  if (ice !== "connected" && ice !== "completed") return false;
+  const sig = String(s.signaling || "").toLowerCase();
+  const conn = String(s.connection || "").toLowerCase();
+  if (sig === "have-local-offer" || sig === "new" || sig === "none" || sig === "") return false;
+  if (conn === "new" || conn === "none" || conn === "") return false;
+  return true;
+}
+
+export function formatHopField(kind: "dc" | "connection" | "ice" | "signaling", value: string): string {
   const v = String(value || "").toLowerCase();
   if (kind === "dc") {
     if (v === "open") return "открыта";
@@ -46,11 +61,18 @@ export function formatHopField(kind: "dc" | "connection" | "ice", value: string)
     if (v === "disconnected" || v === "closed" || v === "none") return "нет";
   }
   if (kind === "ice") {
-    if (v === "connected" || v === "completed") return "найден";
+    if (v === "connected") return "найден";
+    if (v === "completed") return "сбор ок";
     if (v === "checking") return "ищет";
     if (v === "new") return "старт";
     if (v === "failed") return "не найден";
     if (v === "disconnected" || v === "closed" || v === "none") return "нет";
+  }
+  if (kind === "signaling") {
+    if (v === "stable") return "есть";
+    if (v === "have-local-offer") return "жду ответ";
+    if (v === "have-remote-offer") return "отвечаю";
+    if (v === "new") return "старт";
   }
   return v || "-";
 }
@@ -114,7 +136,10 @@ export function shapeHopStatus(
     caption: formatHopCaption({ rtc, pongAgeMs, peerHost }),
     dcText: formatHopField("dc", dc),
     connectionText: formatHopField("connection", connection),
-    iceText: formatHopField("ice", ice),
+    iceText: icePathIsLive({ ice, signaling: String(s.signaling || "none"), connection })
+      ? "найден"
+      : formatHopField("ice", ice === "connected" ? "completed" : ice),
+    signalingText: formatHopField("signaling", String(s.signaling || "none")),
   };
 }
 
@@ -221,6 +246,7 @@ export function renderHopBoardHtml(): string {
       <div class="cell"><div class="k">pid</div><div class="v" id="fPid">-</div></div>
       <div class="cell"><div class="k">Труба</div><div class="v" id="fDc">-</div></div>
       <div class="cell"><div class="k">Сессия</div><div class="v" id="fConn">-</div></div>
+      <div class="cell"><div class="k">Сигнал</div><div class="v" id="fSig">-</div></div>
       <div class="cell"><div class="k">Путь</div><div class="v" id="fIce">-</div></div>
       <div class="cell"><div class="k">Попытка</div><div class="v" id="fGen">-</div></div>
       <div class="cell"><div class="k">epoch</div><div class="v" id="fEpoch">-</div></div>
@@ -245,6 +271,7 @@ function paint(s) {
   document.getElementById("fPid").textContent = s.pid || "-";
   document.getElementById("fDc").textContent = s.dcText || s.dc || "-";
   document.getElementById("fConn").textContent = s.connectionText || s.connection || "-";
+  document.getElementById("fSig").textContent = s.signalingText || "-";
   document.getElementById("fIce").textContent = s.iceText || s.ice || "-";
   document.getElementById("fGen").textContent = s.gen == null ? "-" : String(s.gen);
   document.getElementById("fEpoch").textContent = s.epoch || "-";

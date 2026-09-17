@@ -13,7 +13,7 @@ if exist "C:\Program Files\nodejs\node.exe" (
 ) else (
   set "NODE=node"
 )
-if not exist "%USERPROFILE%\.hf-pipe\secrets\matrix-session.json" if not exist "%USERPROFILE%\.cursor\secrets\matrix-session.json" (
+if not exist "%USERPROFILE%\.hf-pipe\secrets\matrix-session.json" (
   echo No daemon session yet. Confirm the device, then this window continues by itself.
   "%NODE%" src\login.mjs
   if errorlevel 1 (
@@ -23,6 +23,7 @@ if not exist "%USERPROFILE%\.hf-pipe\secrets\matrix-session.json" if not exist "
   )
 )
 :loop
+"%NODE%" src\ensure-hop-dist.mjs
 "%NODE%" src\index.mjs clean
 set "EC=%ERRORLEVEL%"
 if "%EC%"=="2" (

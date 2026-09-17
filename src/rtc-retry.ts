@@ -110,6 +110,10 @@ function rtcPeerFailed(s: {
   return conn === "failed" || ice === "failed";
 }
 
+export function rtcRecycleMayStart(s: { offerCreateInFlight?: boolean }): boolean {
+  return !s.offerCreateInFlight;
+}
+
 export function rtcRecycleAction(s: {
   dcOpen: boolean;
   stuckSinceMs: number;
@@ -120,6 +124,10 @@ export function rtcRecycleAction(s: {
   recreateGapMs?: number;
   connectionState?: string;
   iceConnectionState?: string;
+  signalingState?: string;
+  outstandingOffer?: boolean;
+  lastOfferAt?: number;
+  staleMs?: number;
 }): RtcRecycleAction {
   const failed = rtcPeerFailed(s);
   if (s.dcOpen && !failed) return "none";
@@ -127,6 +135,16 @@ export function rtcRecycleAction(s: {
   const stuck = s.stuckSinceMs ? s.now - s.stuckSinceMs : 0;
   const hard = s.hardMs ?? RTC_STUCK_HARD_MS;
   if (s.stuckSinceMs && stuck >= hard) return "exit";
+  const waitingForAnswer =
+    Boolean(s.outstandingOffer) || s.signalingState === "have-local-offer" || s.connectionState === "new";
+  const connecting =
+    ["connecting", "checking"].includes(String(s.connectionState || "")) ||
+    s.iceConnectionState === "checking";
+  if ((waitingForAnswer || connecting) && !failed) {
+    const stale = s.staleMs ?? RTC_OFFER_STALE_MS;
+    const offerAt = s.lastOfferAt ?? s.stuckSinceMs ?? 0;
+    if (s.now - offerAt < stale) return "none";
+  }
   const gap = s.recreateGapMs ?? RTC_RECREATE_GAP_MS;
   const last = s.lastRecreateAt ?? 0;
   if (last && s.now - last < gap) return "none";

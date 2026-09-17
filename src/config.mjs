@@ -1,3 +1,4 @@
+import { hopSecretsDir, hopSessionFile } from "../dist/secrets-path.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -41,14 +42,14 @@ function firstExisting(paths) {
 }
 
 export function secretsDir() {
-  if (process.env.HF_SECRETS_DIR) return process.env.HF_SECRETS_DIR;
-  const next = join(homeDir(), ".hf-pipe", "secrets");
-  const legacy = join(homeDir(), ".cursor", "secrets");
-  return firstExisting([next, legacy]) || next;
+  return hopSecretsDir(homeDir(), { HF_SECRETS_DIR: process.env.HF_SECRETS_DIR });
 }
 
 export function sessionFile() {
-  return process.env.MATRIX_SESSION_FILE || join(secretsDir(), "matrix-session.json");
+  return hopSessionFile(homeDir(), {
+    HF_SECRETS_DIR: process.env.HF_SECRETS_DIR,
+    MATRIX_SESSION_FILE: process.env.MATRIX_SESSION_FILE,
+  });
 }
 
 export function oauthClientFile() {
