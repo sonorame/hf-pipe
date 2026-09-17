@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { heartbeatShouldRecycle, RTC_HEARTBEAT_MISS_MS } from "../src/hop-heartbeat.js";
+import { heartbeatShouldRecycle, heartbeatShouldLogPulse, RTC_HEARTBEAT_MISS_MS } from "../src/hop-heartbeat.js";
 
 test("no recycle while the pipe looks down", () => {
   assert.equal(
@@ -40,4 +40,13 @@ test("fresh pong keeps the pipe", () => {
     heartbeatShouldRecycle({ rtcLooksUp: true, lastPongAt: 20_000, openedAt: 1_000, now: 25_000 }),
     false,
   );
+});
+
+test("pulse log fires on first up tick", () => {
+  assert.equal(heartbeatShouldLogPulse({ rtcLooksUp: true, lastLogAt: 0, now: 5_000 }), true);
+});
+
+test("pulse log waits the interval", () => {
+  assert.equal(heartbeatShouldLogPulse({ rtcLooksUp: true, lastLogAt: 1_000, now: 10_000, everyMs: 15_000 }), false);
+  assert.equal(heartbeatShouldLogPulse({ rtcLooksUp: true, lastLogAt: 1_000, now: 16_000, everyMs: 15_000 }), true);
 });

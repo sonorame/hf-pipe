@@ -29,6 +29,15 @@ export function formatHopLogLine(kind: string, detail: Record<string, unknown> =
       return gen ? `Собираю новую трубу. Попытка ${gen}.` : "Собираю новую трубу.";
     case "pong-miss":
       return "Пульса нет. Собираю трубу заново.";
+    case "pulse": {
+      const host = detail.host ? String(detail.host) : "";
+      const ms = detail.ms == null || detail.ms === "" ? "" : String(detail.ms);
+      if (host && ms) return `Пульс ок, ${ms} мс. Ответила ${host}.`;
+      if (host) return `Пульс ок. Ответила ${host}.`;
+      return "Пульс ок.";
+    }
+    case "pulse-fail":
+      return "Пульс не дошел.";
     case "wait":
       return "Жду вторую сторону.";
     case "restart":

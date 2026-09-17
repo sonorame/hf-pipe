@@ -12,6 +12,12 @@ export type HopStatusView = {
   signaling: string;
   gen: number;
   epoch: string | null;
+  pongAgeMs: number | null;
+  peerHost: string | null;
+  caption: string;
+  dcText: string;
+  connectionText: string;
+  iceText: string;
 };
 
 export type DoctorParse = {
@@ -23,6 +29,44 @@ export type DoctorParse = {
 
 export function hopRestartDelayMs(): number {
   return 250;
+}
+
+export function formatHopField(kind: "dc" | "connection" | "ice", value: string): string {
+  const v = String(value || "").toLowerCase();
+  if (kind === "dc") {
+    if (v === "open") return "открыта";
+    if (v === "connecting") return "собирается";
+    if (v === "closing" || v === "closed" || v === "none") return "нет";
+  }
+  if (kind === "connection") {
+    if (v === "connected") return "есть";
+    if (v === "connecting") return "сходится";
+    if (v === "new") return "старт";
+    if (v === "failed") return "обрыв";
+    if (v === "disconnected" || v === "closed" || v === "none") return "нет";
+  }
+  if (kind === "ice") {
+    if (v === "connected" || v === "completed") return "найден";
+    if (v === "checking") return "ищет";
+    if (v === "new") return "старт";
+    if (v === "failed") return "не найден";
+    if (v === "disconnected" || v === "closed" || v === "none") return "нет";
+  }
+  return v || "-";
+}
+
+export function formatHopCaption(s: {
+  rtc?: boolean;
+  pongAgeMs?: number | null;
+  peerHost?: string | null;
+}): string {
+  if (!s.rtc) return "Трубы нет. Демон сам собирает.";
+  const host = s.peerHost ? ` Отвечает ${s.peerHost}.` : "";
+  if (s.pongAgeMs == null || Number(s.pongAgeMs) < 0) {
+    return host ? `Канал жив.${host}` : "Канал жив. Жду первый пульс.";
+  }
+  const sec = Math.max(0, Math.round(Number(s.pongAgeMs) / 1000));
+  return `Канал жив. Пульс ${sec} с назад.${host}`;
 }
 
 export function parseHopControl(input: unknown): HopBoardAction | null {
@@ -44,18 +88,33 @@ export function shapeHopStatus(
     signaling: string;
     gen: number;
     epoch: string | null;
+    pongAgeMs: number | null;
+    peerHost: string | null;
   }> = {},
 ): HopStatusView {
+  const dc = String(s.dc || "none");
+  const connection = String(s.connection || "none");
+  const ice = String(s.ice || "none");
+  const peerHost = s.peerHost == null || s.peerHost === "" ? null : String(s.peerHost);
+  const ageNum = s.pongAgeMs == null ? NaN : Number(s.pongAgeMs);
+  const pongAgeMs = Number.isFinite(ageNum) ? ageNum : null;
+  const rtc = Boolean(s.rtc);
   return {
-    rtc: Boolean(s.rtc),
+    rtc,
     pid: Number(s.pid) || 0,
     side: String(s.side || "dirty"),
-    dc: String(s.dc || "none"),
-    connection: String(s.connection || "none"),
-    ice: String(s.ice || "none"),
+    dc,
+    connection,
+    ice,
     signaling: String(s.signaling || "none"),
     gen: Number(s.gen) || 0,
     epoch: s.epoch == null || s.epoch === "" ? null : String(s.epoch),
+    pongAgeMs,
+    peerHost,
+    caption: formatHopCaption({ rtc, pongAgeMs, peerHost }),
+    dcText: formatHopField("dc", dc),
+    connectionText: formatHopField("connection", connection),
+    iceText: formatHopField("ice", ice),
   };
 }
 
@@ -124,6 +183,7 @@ export function renderHopBoardHtml(): string {
   }
   .hero .label { color: var(--mute); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; }
   .hero h2 { margin: 8px 0 0; font-size: 42px; letter-spacing: -0.03em; }
+  .hero .caption { margin: 10px 0 0; color: var(--mute); font-size: 16px; }
   .hero.up h2 { color: var(--live); }
   .hero.down h2 { color: var(--down); }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 18px 0 0; }
@@ -155,13 +215,14 @@ export function renderHopBoardHtml(): string {
   <section class="hero down" id="hero">
     <div class="label">Канал</div>
     <h2 id="heroText">Нет канала</h2>
+    <p class="caption" id="caption">Демон еще не ответил.</p>
     <div class="grid">
       <div class="cell"><div class="k">Демон</div><div class="v" id="fSide">-</div></div>
       <div class="cell"><div class="k">pid</div><div class="v" id="fPid">-</div></div>
-      <div class="cell"><div class="k">DC</div><div class="v" id="fDc">-</div></div>
-      <div class="cell"><div class="k">Связь</div><div class="v" id="fConn">-</div></div>
-      <div class="cell"><div class="k">ICE</div><div class="v" id="fIce">-</div></div>
-      <div class="cell"><div class="k">gen</div><div class="v" id="fGen">-</div></div>
+      <div class="cell"><div class="k">Труба</div><div class="v" id="fDc">-</div></div>
+      <div class="cell"><div class="k">Сессия</div><div class="v" id="fConn">-</div></div>
+      <div class="cell"><div class="k">Путь</div><div class="v" id="fIce">-</div></div>
+      <div class="cell"><div class="k">Попытка</div><div class="v" id="fGen">-</div></div>
       <div class="cell"><div class="k">epoch</div><div class="v" id="fEpoch">-</div></div>
     </div>
   </section>
@@ -179,11 +240,12 @@ function paint(s) {
   const up = Boolean(s && s.rtc);
   hero.className = "hero " + (up ? "up" : "down");
   document.getElementById("heroText").textContent = up ? "Жив" : "Нет канала";
+  document.getElementById("caption").textContent = (s && s.caption) || (up ? "Канал жив." : "Трубы нет. Демон сам собирает.");
   document.getElementById("fSide").textContent = s.side || "-";
   document.getElementById("fPid").textContent = s.pid || "-";
-  document.getElementById("fDc").textContent = s.dc || "-";
-  document.getElementById("fConn").textContent = s.connection || "-";
-  document.getElementById("fIce").textContent = s.ice || "-";
+  document.getElementById("fDc").textContent = s.dcText || s.dc || "-";
+  document.getElementById("fConn").textContent = s.connectionText || s.connection || "-";
+  document.getElementById("fIce").textContent = s.iceText || s.ice || "-";
   document.getElementById("fGen").textContent = s.gen == null ? "-" : String(s.gen);
   document.getElementById("fEpoch").textContent = s.epoch || "-";
   document.getElementById("tick").textContent = new Date().toLocaleTimeString("ru-RU");

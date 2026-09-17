@@ -7,7 +7,7 @@ import {
   localSdpReadyToSignal,
   rtcRecycleAction,
 } from "../dist/rtc-retry.js";
-import { heartbeatShouldRecycle } from "../dist/hop-heartbeat.js";
+import { heartbeatShouldRecycle, heartbeatShouldLogPulse } from "../dist/hop-heartbeat.js";
 import { pushHopLog } from "../dist/hop-log.js";
 import { formatErrorChain } from "../dist/error-chain.js";
 
@@ -37,6 +37,9 @@ let rtcStuckSince = 0;
 let lastRecreateAt = 0;
 let lastProofAt = 0;
 let dcOpenedAt = 0;
+let lastPeerHost = "";
+let lastPulseLogAt = 0;
+let pulseInFlight = false;
 const waiters = new Map();
 const parts = new Map();
 
@@ -309,6 +312,9 @@ export function rtcSnapshot() {
     signaling: pc?.signalingState || "none",
     gen: sessionGen,
     epoch: sessionEpoch || null,
+    lastPongAt: lastProofAt || null,
+    pongAgeMs: lastProofAt ? Date.now() - lastProofAt : null,
+    peerHost: lastPeerHost || null,
   };
 }
 
@@ -472,6 +478,30 @@ export async function startRtc(opts) {
       if (isRtcUp()) {
         rtcStuckSince = 0;
         sendKeepalive();
+        if (
+          heartbeatShouldLogPulse({
+            rtcLooksUp: true,
+            lastLogAt: lastPulseLogAt,
+            now,
+          }) &&
+          !pulseInFlight
+        ) {
+          lastPulseLogAt = now;
+          pulseInFlight = true;
+          const t0 = now;
+          rtcCall({ id: `pulse${now.toString(16)}`, type: "ping", body: {} }, 8000)
+            .then((r) => {
+              const host = r?.body?.host ? String(r.body.host) : "";
+              if (host) lastPeerHost = host;
+              pushHopLog("pulse", { host: lastPeerHost, ms: Date.now() - t0 }, "ok");
+            })
+            .catch(() => {
+              pushHopLog("pulse-fail", {}, "warn");
+            })
+            .finally(() => {
+              pulseInFlight = false;
+            });
+        }
         return;
       }
       if (!rtcStuckSince) rtcStuckSince = now;

@@ -8,6 +8,8 @@ test("human lines do not talk about buttons", () => {
   assert.equal(formatHopLogLine("failed"), "Труба оборвалась. Собираю заново.");
   assert.equal(formatHopLogLine("recycle", { gen: 2 }), "Собираю новую трубу. Попытка 2.");
   assert.equal(formatHopLogLine("pong-miss"), "Пульса нет. Собираю трубу заново.");
+  assert.equal(formatHopLogLine("pulse", { host: "box", ms: 12 }), "Пульс ок, 12 мс. Ответила box.");
+  assert.equal(formatHopLogLine("pulse-fail"), "Пульс не дошел.");
   assert.doesNotMatch(formatHopLogLine("up"), /Пинг|Доктор|Новый канал|Перезапуск/);
 });
 
