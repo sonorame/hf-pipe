@@ -49,6 +49,7 @@ test("install-watchdog creates one tracked interactive supervisor task", () => {
   assert.match(ps1, /\[string\]\$TaskName/);
   assert.match(ps1, /\$resolvedTaskName/);
   assert.match(ps1, /\$launcherRoot = \$PSScriptRoot/);
+  assert.match(ps1, /\$SideName -eq "dirty"[\s\S]*hf-start-host\\\.ps1/);
   assert.doesNotMatch(ps1, /"HFPipe-dirty",\s*"HFPipe-clean"/);
   assert.doesNotMatch(ps1, /supervisor-launch\.vbs/);
   assert.match(ps1, /Hidden\s*=\s*\$true/);

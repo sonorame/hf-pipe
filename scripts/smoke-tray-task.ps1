@@ -10,6 +10,7 @@ $runtime = Join-Path $env:TEMP "hf-tray-smoke-$id"
 $statusFile = Join-Path $runtime "fake-status.json"
 $trayStateFile = Join-Path $runtime "tray-state.json"
 $fakeServer = $null
+$legacyHost = $null
 
 function Assert-True {
   param([bool]$Condition, [string]$Message)
@@ -86,6 +87,19 @@ try {
   Set-Content -LiteralPath (Join-Path $runtime "bootstrap.mjs") -Encoding UTF8 -Value @'
 setInterval(() => {}, 1000);
 '@
+  $legacyScript = Join-Path $runtime "hf-start-host.ps1"
+  Set-Content -LiteralPath $legacyScript -Encoding UTF8 -Value @"
+`$node = (Get-Command node.exe -ErrorAction Stop).Source
+`$child = Start-Process -FilePath `$node -ArgumentList @('"$runtime\bootstrap.mjs"', 'dirty') -WindowStyle Hidden -PassThru
+`$child.WaitForExit()
+"@
+  $legacyHost = Start-Process -FilePath "powershell.exe" `
+    -ArgumentList @("-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", "`"$legacyScript`"") `
+    -WindowStyle Hidden `
+    -PassThru
+  Wait-HfCondition "legacy bootstrap child" {
+    @(Get-HfTestProcesses | Where-Object { $_.CommandLine -match "bootstrap\.mjs" }).Count -eq 1
+  }
 
   $listener = [System.Net.Sockets.TcpListener]::new(
     [System.Net.IPAddress]::Loopback,
@@ -119,6 +133,9 @@ setInterval(() => {}, 1000);
 
   Wait-HfCondition "scheduled task running" {
     (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State -eq "Running"
+  }
+  Wait-HfCondition "legacy owner removed" {
+    $null -eq (Get-Process -Id $legacyHost.Id -ErrorAction SilentlyContinue)
   }
   Wait-HfCondition "one bootstrap child" {
     @(Get-HfTestProcesses | Where-Object { $_.CommandLine -match "bootstrap\.mjs" }).Count -eq 1
@@ -206,6 +223,7 @@ setInterval(() => {}, 1000);
     colors = @("green", "yellow", "red", "gray")
     childRecovered = $true
     hostRecovered = $true
+    legacyOwnerRemoved = $true
     explicitStopHeld = $true
     manualStartRecovered = $true
     bootstrapCount = 1

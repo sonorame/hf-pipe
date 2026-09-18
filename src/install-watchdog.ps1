@@ -31,9 +31,11 @@ function Stop-HfSideProcesses {
     $cl = [string]$_.CommandLine
     if ($_.ProcessId -eq $PID) { return }
     if ($cl -match "install-watchdog") { return }
-    if ($cl -notmatch $rootNeedle) { return }
-    if ($cl -notmatch $sideNeedle) { return }
-    $isHop = ($cl -match "task-host\.ps1") -or
+    $isLegacyDirtyHost = ($SideName -eq "dirty") -and ($cl -match "hf-start-host\.ps1")
+    if (-not $isLegacyDirtyHost -and $cl -notmatch $rootNeedle) { return }
+    if (-not $isLegacyDirtyHost -and $cl -notmatch $sideNeedle) { return }
+    $isHop = $isLegacyDirtyHost -or
+      ($cl -match "task-host\.ps1") -or
       ($cl -match "supervisor-host\.ps1") -or
       ($cl -match "supervisor-launch\.vbs") -or
       ($cl -match "bootstrap\.mjs") -or
