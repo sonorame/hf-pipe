@@ -7,9 +7,6 @@ import http from "node:http";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = existsSync(join(HERE, "index.mjs")) ? HERE : join(HERE, "..");
 const PID_PATH = existsSync(join(ROOT, "index.mjs")) ? join(ROOT, "hf.pid") : join(ROOT, "src", "hf.pid");
-const START_DIRTY = existsSync(join(ROOT, "start-dirty.cmd"))
-  ? join(ROOT, "start-dirty.cmd")
-  : join(ROOT, "src", "start-dirty.cmd");
 const DOCTOR = existsSync(join(ROOT, "hop-doctor.mjs"))
   ? join(ROOT, "hop-doctor.mjs")
   : join(ROOT, "src", "hop-doctor.mjs");
@@ -100,12 +97,18 @@ function clearPid() {
 }
 
 function startDirty() {
-  log("запускаю start-dirty.cmd (окно hf-dirty оставь открытым)");
-  spawn("cmd.exe", ["/c", "start", "hf-dirty", "cmd.exe", "/c", START_DIRTY], {
+  log("запускаю задачу HFPipe-dirty");
+  spawn("powershell.exe", [
+    "-NoProfile",
+    "-WindowStyle",
+    "Hidden",
+    "-Command",
+    "Start-ScheduledTask -TaskName HFPipe-dirty",
+  ], {
     cwd: ROOT,
     detached: true,
     stdio: "ignore",
-    windowsHide: false,
+    windowsHide: true,
   }).unref();
 }
 

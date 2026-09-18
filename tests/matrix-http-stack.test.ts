@@ -73,19 +73,21 @@ test("offerer 90s clock restarts after the offer is sent and after the answer ar
   assert.equal(answered.includes("lastOfferAt = Date.now()"), true);
 });
 
-test("dirty start loop does not use timeout /t", () => {
+test("dirty start script is not a live restart window", () => {
   const cmd = readFileSync(join(here, "../src/start-dirty.cmd"), "utf8");
   assert.equal(/timeout\s+\/t/i.test(cmd), false);
-  assert.equal(cmd.includes("index.mjs"), true);
-  assert.equal(/ping 127\.0\.0\.1/i.test(cmd), true);
+  assert.equal(/ping 127\.0\.0\.1/i.test(cmd), false);
+  assert.equal(cmd.includes("goto loop"), false);
+  assert.equal(cmd.includes("Leave this window open"), false);
+  assert.equal(cmd.includes("HFPipe-dirty"), true);
 });
 
-test("start loops stop on hop already running", () => {
+test("start scripts are not the live restart loop", () => {
   for (const name of ["start-dirty.cmd", "start-clean.cmd"]) {
     const cmd = readFileSync(join(here, `../src/${name}`), "utf8");
-    assert.equal(cmd.includes('if "%EC%"=="2"'), true, name);
-    assert.equal(cmd.includes("hop already running"), true, name);
-    assert.equal(cmd.includes("goto loop"), true, name);
+    assert.equal(cmd.includes("goto loop"), false, name);
+    assert.equal(cmd.includes("Leave this window open"), false, name);
+    assert.equal(cmd.includes("HFPipe-"), true, name);
   }
 });
 

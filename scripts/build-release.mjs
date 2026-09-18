@@ -57,7 +57,9 @@ function copyStable(sourceRoot, runtimeRoot) {
   const stable = [
     ["src/bootstrap.mjs", "bootstrap.mjs"],
     ["src/release-runtime.mjs", "release-runtime.mjs"],
+    ["src/tray-status.mjs", "tray-status.mjs"],
     ["src/supervisor-host.ps1", "supervisor-host.ps1"],
+    ["src/tray-viewer.ps1", "tray-viewer.ps1"],
     ["src/install-watchdog.ps1", "install-watchdog.ps1"],
     ["src/install-watchdog.cmd", "install-watchdog.cmd"],
     ["src/start-clean.cmd", "start-clean.cmd"],

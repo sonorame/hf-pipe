@@ -22,7 +22,7 @@ foreach ($old in @(
 $userId = if ($env:USERDOMAIN) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
 $action = New-ScheduledTaskAction `
   -Execute "powershell.exe" `
-  -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$hostScript`" -Side $Side -Root `"$Root`"" `
+  -Argument "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$hostScript`" -Side $Side -Root `"$Root`"" `
   -WorkingDirectory $Root
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
 $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
@@ -34,6 +34,7 @@ $settings = New-ScheduledTaskSettingsSet `
   -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit ([TimeSpan]::Zero) `
   -MultipleInstances IgnoreNew
+$settings.Hidden = $true
 
 Register-ScheduledTask `
   -TaskName $taskName `

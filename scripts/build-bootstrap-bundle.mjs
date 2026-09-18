@@ -29,8 +29,10 @@ mkdirSync(join(stage, "releases"), { recursive: true });
 for (const name of [
   "bootstrap.mjs",
   "release-runtime.mjs",
+  "tray-status.mjs",
   "release-public.pem",
   "supervisor-host.ps1",
+  "tray-viewer.ps1",
   "install-watchdog.ps1",
   "install-watchdog.cmd",
   "start-clean.cmd",

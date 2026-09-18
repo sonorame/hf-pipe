@@ -4,6 +4,7 @@ import http from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { recordReleaseFailure, verifyRelease } from "./release-runtime.mjs";
+import { renderCasualBoardHtml } from "./tray-status.mjs";
 
 function runtimeRoot() {
   return process.env.HF_RUNTIME_ROOT || join(homedir(), ".hf-pipe", "runtime");
@@ -19,20 +20,7 @@ function failureReason(code, signal, stderr) {
 }
 
 function boardHtml() {
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>hf-pipe status</title><style>
-body{margin:0;background:#111;color:#eee;font:14px Segoe UI,Arial;padding:24px}main{max-width:1000px;margin:auto}
-h1{font-size:22px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
-.card{background:#1c1c1c;border:1px solid #333;border-radius:12px;padding:16px}.up{color:#77db8a}.down{color:#ef806f}
-pre{white-space:pre-wrap;word-break:break-word;color:#ccc}a{color:#8ab4f8}</style></head><body><main>
-<h1>hf-pipe</h1><div class="grid"><section class="card"><h2 id="channel">Загрузка...</h2><pre id="local"></pre></section>
-<section class="card"><h2>Clean</h2><pre id="peer"></pre></section></div><section class="card"><h2>Операции</h2><pre id="ops"></pre></section>
-<script>async function tick(){try{const s=await fetch('/status').then(r=>r.json());const l=s.report?.local||{};
-const up=!!l.rtc;channel.textContent=up?'Канал жив':'Канал не собран';channel.className=up?'up':'down';
-local.textContent=JSON.stringify({bootstrap:s.bootstrap,local:l,lastExit:s.lastExit},null,2);
-peer.textContent=JSON.stringify(s.report?.peer||null,null,2);
-ops.textContent=JSON.stringify(l.traffic?.recent||[],null,2)}catch(e){channel.textContent='Supervisor недоступен';channel.className='down'}}
-tick();setInterval(tick,2000)</script></main></body></html>`;
+  return renderCasualBoardHtml();
 }
 
 function showToast(text) {
@@ -72,7 +60,7 @@ export async function runBootstrap(side, options = {}) {
   };
   let notifiedRtc = null;
   let notifyTimer = null;
-  if (side === "dirty" && !once) {
+  if (!once) {
     const port = Number(process.env.HF_SUPERVISOR_PORT || 18764);
     http
       .createServer((req, res) => {

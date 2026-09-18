@@ -33,6 +33,8 @@ test("install-watchdog creates one tracked interactive supervisor task", () => {
   assert.match(cmd, /install-watchdog\.ps1/);
   assert.match(ps1, /New-ScheduledTaskTrigger\s+-AtLogOn/);
   assert.match(ps1, /supervisor-host\.ps1/);
+  assert.match(ps1, /-STA/);
+  assert.match(ps1, /Hidden\s*=\s*\$true/);
   assert.match(ps1, /RestartCount/);
   assert.match(ps1, /RestartInterval/);
   assert.match(ps1, /StartWhenAvailable/);
@@ -45,4 +47,15 @@ test("install-watchdog creates one tracked interactive supervisor task", () => {
   assert.match(host, /bootstrap\.mjs/);
   assert.match(host, /Start-Process[\s\S]*-Wait/);
   assert.match(host, /Start-Sleep -Seconds 4/);
+  assert.match(host, /tray-viewer\.ps1/);
+  assert.match(host, /BeginInvoke/);
+  assert.match(host, /WindowStyle Hidden/);
+  assert.match(host, /HF_TEMP_KEEP_MS/);
+});
+
+test("hop-up starts the scheduled task, not a console window", () => {
+  const hopUp = readFileSync(join(here, "../scripts/hop-up.mjs"), "utf8");
+  assert.match(hopUp, /Start-ScheduledTask/);
+  assert.match(hopUp, /HFPipe-dirty/);
+  assert.doesNotMatch(hopUp, /hf-dirty/);
 });

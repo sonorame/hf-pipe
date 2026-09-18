@@ -12,6 +12,9 @@ test("stable supervisor board survives worker restarts and emits transition noti
   assert.match(bootstrap, /supervisor-health/);
   assert.match(bootstrap, /ShowBalloonTip/);
   assert.match(bootstrap, /15_000/);
+  assert.match(bootstrap, /renderCasualBoardHtml/);
+  assert.match(bootstrap, /if \(!once\)/);
+  assert.doesNotMatch(bootstrap, /side === "dirty" && !once/);
   assert.match(installer, /hf-pipe status\.url/);
   assert.match(installer, /127\.0\.0\.1:18764/);
 });

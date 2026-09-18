@@ -17,6 +17,8 @@ test("build-release stages, verifies and activates one immutable package", () =>
   assert.equal(state.current, result.buildId);
   assert.equal(existsSync(join(runtime, "bootstrap.mjs")), true);
   assert.equal(existsSync(join(runtime, "supervisor-host.ps1")), true);
+  assert.equal(existsSync(join(runtime, "tray-status.mjs")), true);
+  assert.equal(existsSync(join(runtime, "tray-viewer.ps1")), true);
   assert.equal(existsSync(join(result.releaseDir, "src", "index.mjs")), true);
   assert.equal(existsSync(join(result.releaseDir, "dist", "watchdog-clock.js")), true);
   assert.equal(existsSync(join(result.releaseDir, "src", "ensure-hop-dist.mjs")), false);
