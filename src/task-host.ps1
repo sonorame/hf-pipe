@@ -8,8 +8,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$supervisor = Join-Path $Root "supervisor-host.ps1"
-$jobHelper = Join-Path $Root "process-job.ps1"
+$launcherRoot = $PSScriptRoot
+if (-not (Test-Path -LiteralPath (Join-Path $launcherRoot "supervisor-host.ps1"))) {
+  $launcherRoot = $Root
+}
+$supervisor = Join-Path $launcherRoot "supervisor-host.ps1"
+$jobHelper = Join-Path $launcherRoot "process-job.ps1"
 if (-not (Test-Path -LiteralPath $supervisor)) { throw "missing $supervisor" }
 if (-not (Test-Path -LiteralPath $jobHelper)) { throw "missing $jobHelper" }
 . $jobHelper

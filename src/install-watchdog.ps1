@@ -12,8 +12,12 @@ $ErrorActionPreference = "Stop"
 if (-not (Test-Path -LiteralPath (Join-Path $Root "bootstrap.mjs"))) {
   $Root = Split-Path -Parent $PSScriptRoot
 }
-$hostScript = Join-Path $Root "task-host.ps1"
-$supervisorScript = Join-Path $Root "supervisor-host.ps1"
+$launcherRoot = $PSScriptRoot
+if (-not (Test-Path -LiteralPath (Join-Path $launcherRoot "task-host.ps1"))) {
+  $launcherRoot = $Root
+}
+$hostScript = Join-Path $launcherRoot "task-host.ps1"
+$supervisorScript = Join-Path $launcherRoot "supervisor-host.ps1"
 if (-not (Test-Path -LiteralPath $hostScript)) { throw "missing $hostScript" }
 if (-not (Test-Path -LiteralPath $supervisorScript)) { throw "missing $supervisorScript" }
 $isProductionTask = [string]::IsNullOrWhiteSpace($TaskName)
