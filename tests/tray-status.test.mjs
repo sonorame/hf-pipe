@@ -34,6 +34,12 @@ test("assembling states are yellow", () => {
   }
 });
 
+test("bootstrap without health report is yellow assembling", () => {
+  const v = trayViewFromStatus({ bootstrap: { side: "clean" }, report: null });
+  assert.equal(v.color, "yellow");
+  assert.equal(v.headline, "Собирается");
+});
+
 test("rtc false and not assembling is red", () => {
   const v = trayViewFromStatus({
     bootstrap: { side: "dirty" },

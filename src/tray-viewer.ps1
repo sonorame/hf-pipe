@@ -1,6 +1,7 @@
 ﻿param(
   [string]$StatusUrl = "http://127.0.0.1:18764/status",
-  [string]$DetailsUrl = "http://127.0.0.1:18764/"
+  [string]$DetailsUrl = "http://127.0.0.1:18764/",
+  [string]$StateFile = ""
 )
 
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
@@ -38,6 +39,7 @@ function Get-HfTrayView($status) {
   $color = "red"
   $headline = "Нет трубы"
   $tooltip = "Трубы нет."
+  $assembling = (Test-HfAssembling $local) -or (($null -eq $status.report) -and $status.bootstrap)
   if ($rtc) {
     $color = "green"
     $headline = "Жива"
@@ -47,7 +49,7 @@ function Get-HfTrayView($status) {
       $sec = [Math]::Max(0, [Math]::Round([double]$age / 1000))
       $tooltip = "Труба жива. Пульс $sec с назад."
     }
-  } elseif (Test-HfAssembling $local) {
+  } elseif ($assembling) {
     $color = "yellow"
     $headline = "Собирается"
     $tooltip = "Труба собирается."
@@ -96,13 +98,20 @@ function New-HfColorIcon([string]$color) {
 }
 
 function Start-HfTray {
+  param(
+    [string]$StatusUrl = "http://127.0.0.1:18764/status",
+    [string]$DetailsUrl = "http://127.0.0.1:18764/",
+    [string]$StateFile = ""
+  )
   $notify = New-Object System.Windows.Forms.NotifyIcon
   $notify.Visible = $true
   $menu = New-Object System.Windows.Forms.ContextMenuStrip
   $notify.ContextMenuStrip = $menu
   $script:HfLastColor = ""
   $script:HfLastRtc = $null
+  $script:HfStatusUrl = $StatusUrl
   $script:HfDetailsUrl = $DetailsUrl
+  $script:HfTrayStateFile = $StateFile
   $notify.add_MouseClick({
     param($sender, $e)
     if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
@@ -114,11 +123,22 @@ function Start-HfTray {
   $timer.add_Tick({
     $status = $null
     try {
-      $status = Invoke-RestMethod -Uri $StatusUrl -TimeoutSec 2
+      $status = Invoke-RestMethod -Uri $script:HfStatusUrl -TimeoutSec 2
     } catch {
       $status = $null
     }
     $view = Get-HfTrayView $status
+    if (-not [string]::IsNullOrWhiteSpace($script:HfTrayStateFile)) {
+      $state = [ordered]@{
+        at = [DateTime]::UtcNow.ToString("o")
+        color = [string]$view.Color
+        headline = [string]$view.Headline
+        tooltip = [string]$view.Tooltip
+      }
+      $tempState = "$($script:HfTrayStateFile).tmp"
+      $state | ConvertTo-Json -Compress | Set-Content -LiteralPath $tempState -Encoding UTF8
+      Move-Item -LiteralPath $tempState -Destination $script:HfTrayStateFile -Force
+    }
     $tip = [string]$view.Tooltip
     if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
     $notify.Text = $tip
@@ -155,5 +175,5 @@ function Start-HfTray {
 }
 
 if ($MyInvocation.InvocationName -ne ".") {
-  Start-HfTray
+  Start-HfTray -StatusUrl $StatusUrl -DetailsUrl $DetailsUrl -StateFile $StateFile
 }

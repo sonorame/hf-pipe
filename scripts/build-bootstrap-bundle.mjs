@@ -31,6 +31,8 @@ for (const name of [
   "release-runtime.mjs",
   "tray-status.mjs",
   "release-public.pem",
+  "process-job.ps1",
+  "task-host.ps1",
   "supervisor-host.ps1",
   "tray-viewer.ps1",
   "install-watchdog.ps1",

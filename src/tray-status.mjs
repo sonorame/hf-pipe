@@ -67,7 +67,7 @@ export function trayViewFromStatus(status) {
   }
 
   const rtc = Boolean(local?.rtc);
-  const assembling = isAssembling(local);
+  const assembling = isAssembling(local) || (status?.report == null && Boolean(status?.bootstrap));
   let color = "red";
   let headline = "Нет трубы";
   let tooltip = "Трубы нет.";
@@ -130,7 +130,7 @@ async function tick(){
       cap.textContent=Number.isFinite(age)&&age>=0?("Труба жива. Пульс "+Math.max(0,Math.round(age/1000))+" с назад."):"Труба жива.";
       return;
     }
-    if(assembling(l)){ hero.textContent="Собирается"; hero.className="yellow"; cap.textContent="Труба собирается."; return; }
+    if(assembling(l) || (s.bootstrap && s.report==null)){ hero.textContent="Собирается"; hero.className="yellow"; cap.textContent="Труба собирается."; return; }
     hero.textContent="Нет трубы"; hero.className="red"; cap.textContent="Трубы нет.";
   }catch(e){
     hero.textContent="Нет supervisor"; hero.className="gray"; cap.textContent="Supervisor недоступен.";

@@ -16,6 +16,8 @@ test("build-release stages, verifies and activates one immutable package", () =>
   const state = JSON.parse(readFileSync(join(runtime, "state.json"), "utf8"));
   assert.equal(state.current, result.buildId);
   assert.equal(existsSync(join(runtime, "bootstrap.mjs")), true);
+  assert.equal(existsSync(join(runtime, "process-job.ps1")), true);
+  assert.equal(existsSync(join(runtime, "task-host.ps1")), true);
   assert.equal(existsSync(join(runtime, "supervisor-host.ps1")), true);
   assert.equal(existsSync(join(runtime, "tray-status.mjs")), true);
   assert.equal(existsSync(join(runtime, "tray-viewer.ps1")), true);
