@@ -6,7 +6,7 @@ import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
-const skip = new Set(["node_modules", "dist", "compiled", ".git", ".data"]);
+const skip = new Set(["node_modules", "dist", "compiled", ".git", ".data", ".cursor", "handoff"]);
 const ext = new Set([".md", ".mjs", ".js", ".ts", ".py", ".json", ".cmd", ".ps1", ".yml", ".yaml", ".html", ".example"]);
 const banned = [
   /Malykh/i,
@@ -28,7 +28,7 @@ function walk(dir, out = []) {
     const st = statSync(p);
     if (st.isDirectory()) walk(p, out);
     else if (ext.has(extname(name)) || name === ".env.example" || name === "Dockerfile") {
-      if (name !== "no-personal-meta.test.mjs") out.push(p);
+      if (name !== "no-personal-meta.test.mjs" && name !== "AGENTS.md") out.push(p);
     }
   }
   return out;

@@ -32,7 +32,7 @@ function copyRuntimeTree(from, to, kind) {
         // file
       }
       if (kind === "dist") return /\.js$/.test(name);
-      return /\.(?:mjs|js|ps1|cmd)$/.test(name);
+      return /\.(?:mjs|js|ps1|cmd|py)$/.test(name);
     },
   });
 }
@@ -55,6 +55,7 @@ function treeDigest(root) {
 
 function copyStable(sourceRoot, runtimeRoot) {
   const stable = [
+    ["src/hf-clean-mcp.mjs", "hf-clean-mcp.mjs"],
     ["src/bootstrap.mjs", "bootstrap.mjs"],
     ["src/release-runtime.mjs", "release-runtime.mjs"],
     ["src/tray-status.mjs", "tray-status.mjs"],

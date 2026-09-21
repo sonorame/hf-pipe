@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import os from "os";
+import { formatKiloFacet, resolveKiloFacet } from "./clean-facets.mjs";
 
 const DEFAULT_PROJECT = "C:\\Users\\Kirill\\Desktop\\projects\\SA";
 const DEFAULT_LAB = "C:\\Users\\Kirill\\Desktop\\projects\\cursor_skills_rules\\lab\\lab.py";
@@ -39,6 +40,7 @@ export function formatCleanContext(snap) {
     "hop dirty-mcp -> webrtc -> clean host",
     "files: clean_read / clean_grep / clean_glob / clean_write",
     "helper: clean_lab if HF_LAB_SCRIPT is set",
+    ...formatKiloFacet(snap.kilo),
   ].join("\n");
 }
 
@@ -96,5 +98,7 @@ export function buildCleanContextSnapshot(io = {}) {
     features,
     sshAliases,
   };
+  const kilo = resolveKiloFacet(io);
+  if (kilo) snap.kilo = kilo;
   return { ok: true, ...snap, text: formatCleanContext(snap) };
 }

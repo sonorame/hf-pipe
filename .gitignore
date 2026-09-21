@@ -19,3 +19,6 @@ Thumbs.db
 *.tsbuildinfo
 npm-debug.log*
 tmp-push*.mjs
+.cursor/
+handoff/
+AGENTS.md

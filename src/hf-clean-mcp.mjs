@@ -82,12 +82,19 @@ server.registerTool(
   "clean_context",
   {
     title: "Remote host snapshot",
-    description: "Hostname, user, optional project root and helper script on the clean host.",
-    inputSchema: {},
+    description:
+      "Hostname, SA, lab.py. Optional kilo=today lists Kilo chats; kiloId returns one thread. Jira/Confluence stay on clean_lab.",
+    inputSchema: {
+      kilo: z.string().optional().describe("Pass today to list recent Kilo sessions"),
+      kiloId: z.string().optional().describe("Kilo session id for a text excerpt"),
+    },
   },
-  async () => {
+  async ({ kilo, kiloId } = {}) => {
     try {
-      return textResult(await rpcAsk("context", {}, 20000));
+      const body = {};
+      if (kilo) body.kilo = kilo;
+      if (kiloId) body.kiloId = kiloId;
+      return textResult(await rpcAsk("context", body, 20000));
     } catch (e) {
       return fail(e);
     }

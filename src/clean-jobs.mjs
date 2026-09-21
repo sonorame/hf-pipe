@@ -405,7 +405,7 @@ export async function runCleanJob(frame) {
   try {
     if (isDroppedInputJob(t)) return { ok: false, error: `no handler for ${t}` };
     if (t === "ping") return opPing();
-    if (t === "context") return buildCleanContextSnapshot();
+    if (t === "context") return buildCleanContextSnapshot({ body });
     if (t === "lab") {
       const spec = buildLabCommand(body.args || body.cmd);
       if (!spec.ok) return spec;
