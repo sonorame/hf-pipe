@@ -73,6 +73,34 @@ test("mux copies CONNECT bytes both ways then dies when the dc closes", { timeou
   await closed;
 });
 
+test("server bytes are not sent back as client data", { timeout: 8000 }, async () => {
+  const fromClean = [];
+  let cleanMux;
+  let dirtyMux;
+  const hosts = ["api2.cursor.sh"];
+  cleanMux = createEgressMux({
+    hosts,
+    suffixes: [],
+    send: (type, id, payload) => {
+      if (type === 21) fromClean.push(Buffer.from(payload).subarray(4).toString());
+      return dirtyMux.onFrame(type, id, payload);
+    },
+  });
+  dirtyMux = createEgressMux({
+    hosts,
+    suffixes: [],
+    send: (type, id, payload) => cleanMux.onFrame(type, id, payload),
+    connectTcp: async () => echoDuplex(),
+  });
+  const opened = await cleanMux.openLocal("api2.cursor.sh", 443);
+  assert.equal(opened.ok, true);
+  const got = waitBytes(opened.stream, 6);
+  opened.stream.write("client");
+  assert.equal((await got).toString(), "client");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(fromClean, ["client"]);
+});
+
 test("rpc jobs stay ahead of stream frames on the same channel", async () => {
   const qos = createQosQueue();
   const order = [];

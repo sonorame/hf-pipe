@@ -1,4 +1,4 @@
-import { PassThrough } from "node:stream";
+import { Duplex } from "node:stream";
 import { hostAllowed } from "./egress-dialer.mjs";
 import {
   TYPE_STREAM_ACK,
@@ -49,27 +49,38 @@ export function createEgressMux(options) {
     log("egress close", id, reason || "");
   }
 
-  async function pumpLocal(id, stream, window) {
-    stream.on("data", (chunk) => {
-      const bytes = Buffer.from(chunk);
-      const trySend = () => {
-        const seq = window.takeSend();
-        if (seq == null) {
-          stream.pause();
-          stream.once("drain-window", trySend);
-          return;
-        }
-        Promise.resolve(send(TYPE_STREAM_DATA, id, dataPayload(seq, bytes))).catch((error) =>
-          drop(id, error.message || error),
-        );
-      };
-      trySend();
-    });
-    stream.on("end", () => {
-      Promise.resolve(send(TYPE_STREAM_CLOSE, id, closePayload("end"))).catch(() => {});
-      drop(id, "end");
+  function hopStream(id, window) {
+    const stream = new Duplex({
+      allowHalfOpen: false,
+      write(chunk, _enc, cb) {
+        const bytes = Buffer.from(chunk);
+        const trySend = () => {
+          const seq = window.takeSend();
+          if (seq == null) {
+            stream.once("drain-window", trySend);
+            return;
+          }
+          Promise.resolve(send(TYPE_STREAM_DATA, id, dataPayload(seq, bytes)))
+            .then(() => cb())
+            .catch((error) => {
+              drop(id, error.message || error);
+              cb(error);
+            });
+        };
+        trySend();
+      },
+      final(cb) {
+        Promise.resolve(send(TYPE_STREAM_CLOSE, id, closePayload("end")))
+          .then(() => {
+            drop(id, "end");
+            cb();
+          })
+          .catch(() => cb());
+      },
+      read() {},
     });
     stream.on("error", () => drop(id, "local-error"));
+    return stream;
   }
 
   return {
@@ -77,11 +88,11 @@ export function createEgressMux(options) {
       if (!hostAllowed(host, options)) return { ok: false, error: "host not allowed" };
       const id = allocId(used);
       used.add(id);
-      const stream = new PassThrough();
       const window = createAckWindow(options.maxUnacked || 8);
+      const stream = hopStream(id, window);
       local.set(id, { stream, window, host, port });
+      log("egress open", id, host, port);
       await send(TYPE_STREAM_OPEN, id, openPayload(host, port));
-      await pumpLocal(id, stream, window);
       return { ok: true, stream };
     },
     async onFrame(type, id, payload) {
@@ -104,6 +115,7 @@ export function createEgressMux(options) {
         const window = createAckWindow(options.maxUnacked || 8);
         const queued = [];
         remote.set(id, { socket: null, window, queued });
+        log("egress open", id, req.host, req.port);
         let socket;
         try {
           socket = await connectTcp(req.host, req.port);
@@ -150,7 +162,7 @@ export function createEgressMux(options) {
         }
         const loc = local.get(id);
         const rem = remote.get(id);
-        if (loc?.stream) loc.stream.write(parsed.bytes);
+        if (loc?.stream) loc.stream.push(parsed.bytes);
         else if (rem?.socket) rem.socket.write(parsed.bytes);
         else if (rem?.queued) rem.queued.push(parsed.bytes);
         else return;
@@ -165,9 +177,9 @@ export function createEgressMux(options) {
           return;
         }
         const loc = local.get(id);
-        const rem = remote.get(id);
-        const window = loc?.window || rem?.window;
-        const stream = loc?.stream || rem?.socket;
+        const rel = remote.get(id);
+        const window = loc?.window || rel?.window;
+        const stream = loc?.stream || rel?.socket;
         if (!window) return;
         window.ack(parsed.seq);
         stream?.emit("drain-window");
