@@ -58,6 +58,7 @@ function copyStable(sourceRoot, runtimeRoot) {
   const stable = [
     ["src/hf-clean-mcp.mjs", "hf-clean-mcp.mjs"],
     ["src/bootstrap.mjs", "bootstrap.mjs"],
+    ["src/protocol-version.mjs", "protocol-version.mjs"],
     ["src/release-runtime.mjs", "release-runtime.mjs"],
     ["src/tray-status.mjs", "tray-status.mjs"],
     ["src/process-job.ps1", "process-job.ps1"],

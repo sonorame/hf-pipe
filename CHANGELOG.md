@@ -1,5 +1,13 @@
 # История изменений
 
+## Unreleased
+
+- Native Cursor на clean ходит в облако через HTTP CONNECT `127.0.0.1:18766` на том же datachannel, что RPC.
+- Dirty набирает только хосты Cursor. TLS остается между Cursor и облаком.
+- Mux STREAM - Duplex: серверные байты приходят через `push`. Запись входящих DATA в тот же поток ломает TLS (`UNEXPECTED_MESSAGE`).
+- Handshake в исходниках - протокол `3`. Живой pack может оставаться на `2`, пока обе стороны не возьмут один signed release.
+- Теги: `hf-pipe-clean-cursor-egress-2026-09-22`, `hf-pipe-egress-tls-mux-2026-09-22`.
+
 ## 1.4.0
 
 - Стабильный bootstrap запускает versioned release и откатывает повторно падающий current на previous.

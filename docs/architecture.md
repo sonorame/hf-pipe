@@ -15,6 +15,7 @@ hf-pipe состоит из двух процессов-хопов. Оба пр�
         v
 [хоп clean (удаленный хост)]
         | файловая система / shell / screenshot
+        | HTTP CONNECT 127.0.0.1:18766  (native Cursor -> облако Cursor)
         v
    Удаленная операционная система
 ```
@@ -32,6 +33,7 @@ hf-pipe состоит из двух процессов-хопов. Оба пр�
 |---|---|---|
 | Сигналинг | Matrix `sendToDevice` тип `org.hf.pipe` | SDP-офферы, ответы, кандидаты ICE и редкие сервисные кадры |
 | Данные и RPC | WebRTC datachannel `hf` через TURN TCP или TURNS | Бинарный протокол HFP1, блоки по 16 КиБ, команды и ответы |
+| HTTPS Cursor на clean | тот же datachannel, кадры STREAM `20..23` | HTTP CONNECT `127.0.0.1:18766`, TLS end-to-end до облака Cursor |
 | API оператора | HTTP на `127.0.0.1` | Конечные точки `/status` и `/ask` |
 | Интеграция с Cursor | stdio MCP (`clean-pc`) | Проксирование запросов в POST `/ask` |
 
@@ -55,7 +57,11 @@ hf-pipe состоит из двух процессов-хопов. Оба пр�
 | `src/index.mjs` | Определение роли (clean/dirty), загрузка сессии, локальный HTTP-сервер, очередь отправки to-device |
 | `src/matrix/client.ts` | Инициализация matrix-js-sdk, облегченный фильтр синхронизации, отключение лишней криптографии комнат |
 | `src/network-policy.ts` | Политика DNS `ipv4first`, Happy Eyeballs, статический пин адресов при отказе системного DNS, `pinnedFetch` |
-| `src/rtc-pipe.mjs` | Создание WebRTC PeerConnection через библиотеку werift, поддержка TURN TCP, упаковка кадров HFP1 |
+| `src/rtc-pipe.mjs` | Создание WebRTC PeerConnection через библиотеку werift, поддержка TURN TCP, упаковка кадров HFP1, CONNECT egress |
+| `src/egress-proxy.mjs` | HTTP CONNECT только на `127.0.0.1`, не SOCKS, не порт RPC |
+| `src/egress-mux.mjs` | Дуплекс STREAM: `_write` к dirty, `push` от dirty; входящие DATA нельзя `write` в тот же поток |
+| `src/egress-dialer.mjs` | Allowlist облака Cursor на стороне dirty |
+| `src/cursor-egress-apply.mjs` | settings, ярлык `--proxy-server`, firewall `HFPipe-Cursor-*` |
 | `src/clean-jobs.mjs` | Обработка задач на удаленном хосте: запуск shell, обход каталогов, чтение, запись, снятие screenshot |
 | `src/clean-context.mjs` | Сбор сводки об удаленном хосте (имя, пользователь, проектный каталог, вспомогательные скрипты) |
 | `src/hf-clean-mcp.mjs` | Сервер MCP для Cursor (инструменты с префиксом `clean_*`) |
@@ -100,6 +106,16 @@ hf-pipe состоит из двух процессов-хопов. Оба пр�
 2. Контроль Matrix sync: если состояние синхронизации не переходит в `SYNCING`, `PREPARED` или `CATCHUP` дольше значения `HF_SYNC_DEAD_MS` (по умолчанию 120 секунд), процесс завершается с кодом 7 для перезапуска внешним циклом.
 3. Контроль скачка часов: при выходе из сна или гибернации скачок системного времени больше 60 секунд приводит к немедленному перезапуску процесса с кодом 7.
 4. Повтор оффера WebRTC: сторона `dirty` автоматически генерирует новый оффер, если соединение не перешло в состояние `up`. Состояние `connecting` старше 8 секунд сбрасывается и не блокирует очередь.
+
+## Native Cursor на удаленной стороне
+
+Подробности: [cursor-egress.md](cursor-egress.md).
+
+Cursor на clean подключается к `127.0.0.1:18766` по HTTP CONNECT. Clean не набирает облако сам. Dirty открывает TCP только к `*.cursor.sh`, `*.cursor.com`, `*.cursorapi.com`. На одном datachannel RPC идет раньше STREAM.
+
+Поток mux - `Duplex`. Серверные байты приходят через `push`. Если их записать в `PassThrough`, они уезжают обратно как клиентский TLS и handshake ломается (`UNEXPECTED_MESSAGE`).
+
+Версия протокола в git по умолчанию `3`. Живой pack может оставаться на `2`, пока обе стороны не активируют один signed release. Bootstrap из git с ожиданием `3` нельзя класть поверх pack, который проверяет `2`.
 
 ## Сетевые границы
 

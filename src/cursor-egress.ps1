@@ -30,9 +30,9 @@ if (-not (Test-Path -LiteralPath $CursorExe)) {
 
 Remove-HfCursorRules
 try {
-  New-NetFirewallRule -Name "HFPipe-Cursor-allow-loopback" -DisplayName "HFPipe Cursor loopback" -Direction Outbound -Action Allow -Program $CursorExe -RemoteAddress "127.0.0.0/8" -Protocol TCP -AddressFamily IPv4 | Out-Null
-  New-NetFirewallRule -Name "HFPipe-Cursor-block-out-v4" -DisplayName "HFPipe Cursor block v4" -Direction Outbound -Action Block -Program $CursorExe -RemoteAddress @("0.0.0.0-126.255.255.255", "128.0.0.0-255.255.255.255") -AddressFamily IPv4 | Out-Null
-  New-NetFirewallRule -Name "HFPipe-Cursor-block-out-v6" -DisplayName "HFPipe Cursor block v6" -Direction Outbound -Action Block -Program $CursorExe -AddressFamily IPv6 | Out-Null
+  New-NetFirewallRule -Name "HFPipe-Cursor-allow-loopback" -DisplayName "HFPipe Cursor loopback" -Direction Outbound -Action Allow -Program $CursorExe -RemoteAddress "127.0.0.0/8" -Protocol TCP | Out-Null
+  New-NetFirewallRule -Name "HFPipe-Cursor-block-out-v4" -DisplayName "HFPipe Cursor block v4" -Direction Outbound -Action Block -Program $CursorExe -RemoteAddress @("0.0.0.0-126.255.255.255", "128.0.0.0-255.255.255.255") | Out-Null
+  New-NetFirewallRule -Name "HFPipe-Cursor-block-out-v6" -DisplayName "HFPipe Cursor block v6" -Direction Outbound -Action Block -Program $CursorExe -RemoteAddress "::/0" | Out-Null
 } catch {
   throw "Cursor firewall needs administrator: $($_.Exception.Message)"
 }
