@@ -14,6 +14,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildReleaseManifest, promoteRelease, verifyRelease } from "../src/release-runtime.mjs";
 import { ensureReleaseKeyPair, loadPrivateKey } from "../src/release-key.mjs";
+import { HOP_PROTOCOL_VERSION } from "../src/protocol-version.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const defaultSourceRoot = join(here, "..");
@@ -67,6 +68,8 @@ function copyStable(sourceRoot, runtimeRoot) {
     ["src/install-watchdog.cmd", "install-watchdog.cmd"],
     ["src/start-clean.cmd", "start-clean.cmd"],
     ["src/start-dirty.cmd", "start-dirty.cmd"],
+    ["src/cursor-egress.ps1", "cursor-egress.ps1"],
+    ["src/cursor-egress-apply.mjs", "cursor-egress-apply.mjs"],
   ];
   for (const [from, to] of stable) copyFileSync(join(sourceRoot, from), join(runtimeRoot, to));
 }
@@ -76,7 +79,7 @@ export function buildRelease(options = {}) {
   const runtimeRoot = options.runtimeRoot;
   if (!runtimeRoot) throw new Error("runtimeRoot is required");
   const keyDir = options.keyDir || join(homedir(), ".hf-pipe", "keys");
-  const protocolVersion = Number(options.protocolVersion || 2);
+  const protocolVersion = Number(options.protocolVersion || HOP_PROTOCOL_VERSION);
   const keys = ensureReleaseKeyPair(keyDir);
   mkdirSync(join(runtimeRoot, "releases"), { recursive: true });
 

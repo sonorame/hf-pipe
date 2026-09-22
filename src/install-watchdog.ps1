@@ -127,4 +127,13 @@ if ($isProductionTask) {
 }
 
 Start-ScheduledTask -TaskName $resolvedTaskName
+if ($isProductionTask -and $Side -eq "clean") {
+  $apply = Join-Path $Root "cursor-egress-apply.mjs"
+  if (-not (Test-Path -LiteralPath $apply)) {
+    $apply = Join-Path $Root "src\cursor-egress-apply.mjs"
+  }
+  if (-not (Test-Path -LiteralPath $apply)) { throw "missing cursor-egress-apply.mjs" }
+  & node $apply --install
+  if ($LASTEXITCODE -ne 0) { throw "cursor egress apply failed" }
+}
 Write-Output "ok $resolvedTaskName supervisor"

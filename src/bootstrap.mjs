@@ -4,6 +4,7 @@ import http from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { recordReleaseFailure, verifyRelease } from "./release-runtime.mjs";
+import { hopProtocolVersion } from "./protocol-version.mjs";
 import { renderCasualBoardHtml } from "./tray-status.mjs";
 
 function runtimeRoot() {
@@ -46,7 +47,7 @@ export async function runBootstrap(side, options = {}) {
   const root = options.runtimeRoot || runtimeRoot();
   const once = options.once ?? process.env.HF_BOOTSTRAP_ONCE === "1";
   const threshold = Number(process.env.HF_STARTUP_FAILURE_THRESHOLD || 2);
-  const protocolVersion = Number(process.env.HF_PROTOCOL_VERSION || 2);
+  const protocolVersion = hopProtocolVersion();
   const publicPath =
     options.publicKeyPath || process.env.HF_RELEASE_PUBLIC_KEY || join(root, "release-public.pem");
   const publicKey = readFileSync(publicPath, "utf8");
