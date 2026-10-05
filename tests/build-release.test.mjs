@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,7 +13,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 test("build-release stages, verifies and activates one immutable package", () => {
   const runtime = mkdtempSync(join(tmpdir(), "hf-built-release-"));
   const keyDir = join(runtime, "keys");
-  const result = buildRelease({ sourceRoot: root, runtimeRoot: runtime, keyDir, activate: true });
+  const pair = generateKeyPairSync("ed25519");
+  const signingKeyPair = {
+    privateKey: pair.privateKey.export({ type: "pkcs8", format: "pem" }),
+    publicKey: pair.publicKey.export({ type: "spki", format: "pem" }),
+  };
+  const result = buildRelease({ sourceRoot: root, runtimeRoot: runtime, keyDir, signingKeyPair, activate: true });
   const state = JSON.parse(readFileSync(join(runtime, "state.json"), "utf8"));
   assert.equal(state.current, result.buildId);
   assert.equal(existsSync(join(runtime, "bootstrap.mjs")), true);

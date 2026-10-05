@@ -5,10 +5,11 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 const MANIFEST = "release-manifest.json";
 const IMPORT_RE = /\b(?:import|export)\s+(?:[^"'()]*?\s+from\s+)?["']([^"']+)["']/g;
@@ -114,6 +115,31 @@ export function verifyRelease(root, options) {
   return manifest;
 }
 
+export function quarantineStrayReleaseFiles(releaseDir, options = {}) {
+  const manifestPath = join(releaseDir, MANIFEST);
+  if (!existsSync(manifestPath)) return [];
+  let listed;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    listed = new Set((manifest.files || []).map((file) => slash(String(file.path || ""))));
+  } catch {
+    return [];
+  }
+  const stray = filesUnder(releaseDir).filter((rel) => !listed.has(rel));
+  if (!stray.length) return [];
+  const destRoot = options.destDir || join(dirname(dirname(releaseDir)), "stray", basename(releaseDir));
+  const moved = [];
+  for (const rel of stray) {
+    const from = join(releaseDir, ...rel.split("/"));
+    const to = join(destRoot, ...rel.split("/"));
+    mkdirSync(dirname(to), { recursive: true });
+    if (existsSync(to)) rmSync(to, { force: true });
+    renameSync(from, to);
+    moved.push(rel);
+  }
+  return moved;
+}
+
 function readState(runtimeRoot) {
   try {
     return JSON.parse(readFileSync(join(runtimeRoot, "state.json"), "utf8"));
@@ -151,13 +177,16 @@ export function recordReleaseFailure(runtimeRoot, releaseId, options = {}) {
   const state = readState(runtimeRoot);
   const failures = { ...(state.failures || {}) };
   failures[id] = Number(failures[id] || 0) + 1;
+  let previous = state.previous || null;
+  if (previous && (state.bad || []).includes(previous)) previous = null;
   const next = {
     ...state,
+    previous,
     failures,
     lastFailure: { releaseId: id, reason: String(options.reason || "failed"), at: new Date().toISOString() },
   };
-  if (state.current === id && failures[id] >= threshold && state.previous) {
-    next.current = state.previous;
+  if (state.current === id && failures[id] >= threshold && previous) {
+    next.current = previous;
     next.previous = null;
     next.bad = [...new Set([...(state.bad || []), id])];
   }

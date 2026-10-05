@@ -8,6 +8,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -81,7 +82,7 @@ export function buildRelease(options = {}) {
   if (!runtimeRoot) throw new Error("runtimeRoot is required");
   const keyDir = options.keyDir || join(homedir(), ".hf-pipe", "keys");
   const protocolVersion = Number(options.protocolVersion || HOP_PROTOCOL_VERSION);
-  const keys = ensureReleaseKeyPair(keyDir);
+  const keys = options.signingKeyPair || ensureReleaseKeyPair(keyDir);
   mkdirSync(join(runtimeRoot, "releases"), { recursive: true });
 
   const staging = join(runtimeRoot, "releases", `.staging-${process.pid}-${Date.now()}`);
@@ -93,7 +94,7 @@ export function buildRelease(options = {}) {
   }
 
   const buildId = options.buildId || treeDigest(staging);
-  const privateKey = loadPrivateKey(keys.privatePath);
+  const privateKey = keys.privateKey || loadPrivateKey(keys.privatePath);
   buildReleaseManifest(staging, { buildId, protocolVersion, privateKey });
   verifyRelease(staging, { publicKey: keys.publicKey, expectedProtocolVersion: protocolVersion });
 
@@ -105,7 +106,7 @@ export function buildRelease(options = {}) {
     renameSync(staging, releaseDir);
   }
   copyStable(sourceRoot, runtimeRoot);
-  copyFileSync(keys.publicPath, join(runtimeRoot, "release-public.pem"));
+  writeFileSync(join(runtimeRoot, "release-public.pem"), keys.publicKey, { mode: 0o644 });
   if (options.activate) promoteRelease(runtimeRoot, buildId);
   return { buildId, releaseDir, runtimeRoot, publicKeyPath: join(runtimeRoot, "release-public.pem") };
 }

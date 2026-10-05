@@ -12,9 +12,9 @@
   .\kes-castrate-trusted.ps1 -Action undo
 
 Trusted UI checklist (Do not monitor application activity):
-  1) C:\Users\Malykh_Kirill\AppData\Local\Programs\cursor\Cursor.exe
+  1) %LOCALAPPDATA%\Programs\cursor\Cursor.exe
   2) C:\Program Files\nodejs\node.exe
-  3) C:\Users\Malykh_Kirill\AppData\Local\Programs\cursor\resources\app\resources\helpers\node.exe
+  3) %LOCALAPPDATA%\Programs\cursor\resources\app\resources\helpers\node.exe
   Do NOT add: powershell.exe, cursor-agent\versions\*, *.vbs, Programs\cursor\_\*
 #>
 param(

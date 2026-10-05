@@ -5,7 +5,7 @@
   "description": "Cross-host remote control when direct TCP is blocked: Matrix to-device signaling and WebRTC TURN/TCP RPC.",
   "type": "module",
   "engines": {
-    "node": ">=20.3.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "build": "tsc",

@@ -131,8 +131,19 @@ export function createEgressMux(options) {
         }
         pending.socket = socket;
         for (const bytes of pending.queued.splice(0)) socket.write(bytes);
+        let inFlight = 0;
+        let ended = false;
+        let closing = false;
+        const finishPeer = () => {
+          if (!ended || inFlight || closing || !remote.has(id)) return;
+          closing = true;
+          Promise.resolve(send(TYPE_STREAM_CLOSE, id, closePayload("peer-end")))
+            .finally(() => drop(id, "peer-end"))
+            .catch(() => {});
+        };
         socket.on("data", (chunk) => {
           const bytes = Buffer.from(chunk);
+          inFlight += 1;
           const trySend = () => {
             const seq = window.takeSend();
             if (seq == null) {
@@ -140,15 +151,18 @@ export function createEgressMux(options) {
               socket.once("drain-window", trySend);
               return;
             }
-            Promise.resolve(send(TYPE_STREAM_DATA, id, dataPayload(seq, bytes))).catch((err) =>
-              drop(id, err.message || err),
-            );
+            Promise.resolve(send(TYPE_STREAM_DATA, id, dataPayload(seq, bytes)))
+              .catch((err) => drop(id, err.message || err))
+              .finally(() => {
+                inFlight -= 1;
+                finishPeer();
+              });
           };
           trySend();
         });
         socket.on("end", () => {
-          Promise.resolve(send(TYPE_STREAM_CLOSE, id, closePayload("peer-end"))).catch(() => {});
-          drop(id, "peer-end");
+          ended = true;
+          finishPeer();
         });
         socket.on("error", () => drop(id, "dial-error"));
         return;
@@ -188,6 +202,16 @@ export function createEgressMux(options) {
       }
       if (type === TYPE_STREAM_CLOSE) {
         const reason = parseClose(payload).reason;
+        const loc = local.get(id);
+        if (loc && reason === "peer-end") {
+          // Preserve buffered response bytes and let pipe() end the client socket.
+          // destroy() here truncates downloads when the consumer is slower.
+          local.delete(id);
+          used.delete(id);
+          loc.stream.push(null);
+          log("egress close", id, reason);
+          return;
+        }
         drop(id, reason);
       }
     },

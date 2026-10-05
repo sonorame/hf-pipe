@@ -46,4 +46,6 @@ test("capture daemon does not stall on PowerShell stderr", () => {
   assert.match(js, /input:\s*JSON\.stringify/);
   const ps1 = readFileSync(join(here, "../src/capture-loop.ps1"), "utf8");
   assert.match(ps1, /HfCap\.dll/);
+  assert.match(ps1, /\$env:TEMP/);
+  assert.doesNotMatch(ps1, /Join-Path \$here "HfCap\.dll"/);
 });

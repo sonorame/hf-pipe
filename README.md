@@ -7,7 +7,7 @@
 [Быстрый старт](#быстрый-старт) · [Запуск без Docker](#запуск-без-docker) · [Запуск в Docker](#запуск-в-docker) · [Куда нажимать и что делать](#куда-нажимать-и-что-делать-дальше) · [Архитектура](docs/architecture.md) · [Cursor CONNECT](docs/cursor-egress.md) · [Параметры окружения](docs/configuration.md)
 
 ![CI](https://github.com/sonorame/hf-pipe/actions/workflows/ci.yml/badge.svg)
-![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
+![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Для чего нужен инструмент
@@ -56,7 +56,7 @@ Cursor / консоль
 
 ## Требования
 
-- Node.js 20.3+
+- Node.js 22+
 - Python 3 (для вызова CLI через `src/dirty.py`)
 - Доступный обеим машинам сервер Matrix (Synapse + MAS/OIDC или любой homeserver, выдающий access token)
 - TURN-сервер с поддержкой TCP или TLS (выдается через `GET /_matrix/client/v3/voip/turnServer`)

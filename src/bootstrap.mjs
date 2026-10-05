@@ -3,7 +3,8 @@ import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
 import http from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { recordReleaseFailure, verifyRelease } from "./release-runtime.mjs";
+import { pathToFileURL } from "node:url";
+import { quarantineStrayReleaseFiles, recordReleaseFailure, verifyRelease } from "./release-runtime.mjs";
 import { hopProtocolVersion } from "./protocol-version.mjs";
 import { renderCasualBoardHtml } from "./tray-status.mjs";
 
@@ -87,6 +88,8 @@ export async function runBootstrap(side, options = {}) {
         if (!releaseId) throw new Error("no current release");
         releaseDir = join(root, "releases", releaseId);
         status.bootstrap.current = releaseId;
+        const stray = quarantineStrayReleaseFiles(releaseDir);
+        if (stray.length) log.write(`${new Date().toISOString()} stray moved ${stray.join(",")}\n`);
         const manifest = verifyRelease(releaseDir, {
           publicKey,
           expectedProtocolVersion: protocolVersion,
@@ -180,7 +183,7 @@ export async function runBootstrap(side, options = {}) {
   });
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replace(/\\/g, "/")}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const side = String(process.argv[2] || process.env.HF_SIDE || "").toLowerCase();
   if (!["dirty", "clean"].includes(side)) {
     console.error("Usage: node bootstrap.mjs dirty|clean");

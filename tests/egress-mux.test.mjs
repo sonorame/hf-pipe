@@ -3,6 +3,7 @@ import { Duplex } from "node:stream";
 import test from "node:test";
 import { createEgressMux } from "../src/egress-mux.mjs";
 import { createQosQueue } from "../src/egress-qos.mjs";
+import { TYPE_STREAM_OPEN, TYPE_STREAM_DATA, TYPE_STREAM_CLOSE, openPayload, dataPayload, closePayload } from "../src/egress-stream.mjs";
 
 function echoDuplex() {
   const stream = new Duplex({
@@ -115,4 +116,43 @@ test("rpc jobs stay ahead of stream frames on the same channel", async () => {
   await qos.flush();
   assert.equal(order[0], "rpc");
   assert.equal(order.filter((item) => item === "stream").length, 8);
+});
+
+test("TCP EOF waits for the last queued server bytes before STREAM CLOSE", async () => {
+  const socket = echoDuplex();
+  const order = [];
+  let deliver;
+  const mux = createEgressMux({
+    hosts: ["api.openai.com"], suffixes: [],
+    connectTcp: async () => socket,
+    send: async (type) => {
+      if (type === TYPE_STREAM_DATA) {
+        await new Promise((resolve) => { deliver = resolve; });
+        order.push("data");
+      } else if (type === TYPE_STREAM_CLOSE) order.push("close");
+    },
+  });
+  await mux.onFrame(TYPE_STREAM_OPEN, 42, openPayload("api.openai.com", 443));
+  socket.emit("data", Buffer.from("final TLS record"));
+  socket.emit("end");
+  assert.deepEqual(order, []);
+  deliver();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ["data", "close"]);
+  assert.equal(socket.destroyed, true);
+});
+
+test("peer EOF preserves buffered bytes for a slow CONNECT consumer", async () => {
+  let id;
+  const mux = createEgressMux({
+    hosts: ["api.openai.com"], suffixes: [],
+    send: async (type, streamId) => { if (type === TYPE_STREAM_OPEN) id = streamId; },
+  });
+  const { stream } = await mux.openLocal("api.openai.com", 443);
+  const expected = Buffer.alloc(1024 * 1024, 0x5a);
+  await mux.onFrame(TYPE_STREAM_DATA, id, dataPayload(0, expected));
+  await mux.onFrame(TYPE_STREAM_CLOSE, id, closePayload("peer-end"));
+  const received = [];
+  for await (const chunk of stream) received.push(chunk);
+  assert.deepEqual(Buffer.concat(received), expected);
 });
