@@ -54,6 +54,7 @@ export function stageReleaseArchive(options) {
     const releaseDir = join(options.runtimeRoot, "releases", manifest.buildId);
     if (existsSync(releaseDir)) rmSync(staging, { recursive: true, force: true });
     else renameSync(staging, releaseDir);
+    verifyRelease(releaseDir, {publicKey:options.publicKey, expectedProtocolVersion:options.expectedProtocolVersion});
     return { buildId: manifest.buildId, releaseDir, activated: false };
   } catch (error) {
     rmSync(staging, { recursive: true, force: true });

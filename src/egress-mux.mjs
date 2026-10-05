@@ -23,7 +23,12 @@ function allocId(used) {
 }
 
 export function createEgressMux(options) {
-  const send = options.send;
+  let txBytes = 0;
+  let rxBytes = 0;
+  const send = async (type, id, payload) => {
+    await options.send(type, id, payload);
+    if (type === TYPE_STREAM_DATA) txBytes += parseData(payload).bytes.length;
+  };
   const connectTcp = options.connectTcp;
   const used = new Set();
   const local = new Map();
@@ -84,6 +89,15 @@ export function createEgressMux(options) {
   }
 
   return {
+    snapshot() {
+      let queuedBytes = 0;
+      for (const item of local.values()) queuedBytes += item.stream.readableLength + item.stream.writableLength;
+      for (const item of remote.values()) {
+        queuedBytes += item.queued.reduce((sum, bytes) => sum + bytes.length, 0);
+        queuedBytes += item.socket?.writableLength || 0;
+      }
+      return {txBytes, rxBytes, streams: local.size + remote.size, queuedBytes};
+    },
     async openLocal(host, port) {
       if (!hostAllowed(host, options)) return { ok: false, error: "host not allowed" };
       const id = allocId(used);
@@ -180,6 +194,7 @@ export function createEgressMux(options) {
         else if (rem?.socket) rem.socket.write(parsed.bytes);
         else if (rem?.queued) rem.queued.push(parsed.bytes);
         else return;
+        rxBytes += parsed.bytes.length;
         await send(TYPE_STREAM_ACK, id, ackPayload(parsed.seq));
         return;
       }

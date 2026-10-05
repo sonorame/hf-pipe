@@ -110,6 +110,13 @@ Register-ScheduledTask `
   -Force | Out-Null
 
 if ($isProductionTask) {
+  $shortcutShell = New-Object -ComObject WScript.Shell
+  $shortcut = $shortcutShell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "hf-pipe $Side.lnk"))
+  $shortcut.TargetPath = Join-Path $env:WINDIR "System32\wscript.exe"
+  $shortcut.Arguments = "`"$(Join-Path $Root 'start-hop.vbs')`" $Side"
+  $shortcut.WorkingDirectory = $Root
+  $shortcut.WindowStyle = 7
+  $shortcut.Save()
   $startup = [Environment]::GetFolderPath("Startup")
   foreach ($old in @("hf-$Side.lnk", $(if ($Side -eq "dirty") { "CursorMCP.lnk" }))) {
     if ([string]::IsNullOrWhiteSpace($old)) { continue }

@@ -23,7 +23,7 @@ function filesUnder(root, dir = root) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...filesUnder(root, path));
-    else if (entry.isFile() && entry.name !== MANIFEST) out.push(slash(relative(root, path)));
+    else if (entry.isFile() && (entry.name !== MANIFEST || dir !== root)) out.push(slash(relative(root, path)));
   }
   return out.sort();
 }
@@ -46,7 +46,9 @@ function assertInside(root, path) {
 }
 
 function validateImports(root) {
-  for (const rel of filesUnder(root).filter((name) => /\.(?:mjs|js)$/.test(name))) {
+  // Third-party package imports use exports/conditions rather than this relative-file check.
+  // Their complete bytes remain covered by the signed manifest and hash verification.
+  for (const rel of filesUnder(root).filter((name) => /\.(?:mjs|js)$/.test(name) && !name.split("/").includes("node_modules"))) {
     const sourcePath = join(root, rel);
     const source = readFileSync(sourcePath, "utf8");
     IMPORT_RE.lastIndex = 0;
@@ -74,7 +76,7 @@ export function buildReleaseManifest(root, options) {
     buildId: String(options.buildId),
     protocolVersion: Number(options.protocolVersion),
     createdAt: options.createdAt || new Date().toISOString(),
-    entrypoint: "src/index.mjs",
+    entrypoint: options.entrypoint || "src/index.mjs",
     files,
   };
   const signature = signBytes(null, canonical(manifest), options.privateKey).toString("base64");
@@ -95,6 +97,9 @@ export function verifyRelease(root, options) {
     Buffer.from(manifest.signature.value, "base64"),
   );
   if (!valid) throw new Error("release signature invalid");
+  const entrypoint = resolve(root, manifest.entrypoint || "src/index.mjs");
+  assertInside(root, entrypoint);
+  if (!existsSync(entrypoint) || !statSync(entrypoint).isFile()) throw new Error("release entrypoint missing");
   if (
     options.expectedProtocolVersion != null &&
     manifest.protocolVersion !== Number(options.expectedProtocolVersion)

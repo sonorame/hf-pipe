@@ -10,7 +10,10 @@ import {
 import { basename, dirname, extname, join } from "path";
 import { fileURLToPath } from "url";
 import os from "os";
-import { execFileSync, execSync } from "child_process";
+import { execFile, exec } from "child_process";
+import { promisify } from "node:util";
+const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 import { LIVE_QUALITY, LIVE_MAXW, normalizeScreens } from "./view-shot.mjs";
 import { isDroppedInputJob } from "./hop-surface.mjs";
 import {
@@ -88,20 +91,24 @@ function opPing() {
   };
 }
 
-function opShell(body) {
+async function opShell(body) {
+  const timeout = body.timeout === undefined ? 120 : Number(body.timeout);
+  if (!Number.isFinite(timeout) || timeout <= 0 || timeout > 3600) {
+    return { ok: false, error: "shell timeout must be between 0 and 3600 seconds (exclusive of 0)" };
+  }
   try {
-    const stdout = execSync(String(body.cmd || ""), {
+    const { stdout, stderr } = await execAsync(String(body.cmd || ""), {
       cwd: defaultShellCwd(body.cwd),
-      timeout: (Number(body.timeout) || 120) * 1000,
+      timeout: timeout * 1000,
       encoding: "utf8",
       windowsHide: true,
       maxBuffer: MAX_OUT,
     });
-    return { ok: true, exit: 0, stdout: String(stdout).slice(-MAX_OUT), stderr: "" };
+    return { ok: true, exit: 0, stdout: String(stdout).slice(-MAX_OUT), stderr: String(stderr).slice(-MAX_OUT) };
   } catch (e) {
     return {
       ok: false,
-      exit: e.status ?? 1,
+      exit: typeof e.code === "number" ? e.code : 1,
       stdout: String(e.stdout || "").slice(-MAX_OUT),
       stderr: String(e.stderr || e.message || "").slice(-MAX_OUT),
     };
@@ -253,19 +260,20 @@ function opWrite(body) {
   return { ok: true, path: p, bytes: buf.length };
 }
 
-function captureOnce(req, timeoutMs) {
+async function captureOnce(req, timeoutMs) {
   const ps1 = join(HERE, "capture-loop.ps1");
-  const stdout = execFileSync(
+  const capture = execFileAsync(
     "powershell.exe",
     ["-STA", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1],
     {
-      input: JSON.stringify(req) + "\n",
       timeout: timeoutMs,
       windowsHide: true,
       encoding: "utf8",
       maxBuffer: MAX_OUT,
     }
   );
+  capture.child.stdin.end(JSON.stringify(req) + "\n");
+  const { stdout } = await capture;
   const line = String(stdout || "")
     .replace(/^\uFEFF/, "")
     .trim()
@@ -299,7 +307,7 @@ async function opScreenshot(body = {}) {
 
   if (jpeg) {
     try {
-      const geom = captureOnce({ display, maxw, quality, out }, 20000);
+      const geom = await captureOnce({ display, maxw, quality, out }, 20000);
       if (!geom?.ok) return { ok: false, error: geom?.error || "capture failed" };
       const data = readFileSync(out);
       if (data.length > MAX_BLOB) return { ok: false, error: `shot too big ${data.length}` };
@@ -360,7 +368,7 @@ async function opScreenshot(body = {}) {
   ].join("\r\n");
   writeFileSync(ps1, script, "utf8");
   try {
-    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1], {
+    await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ps1], {
       timeout: 20000,
       windowsHide: true,
     });

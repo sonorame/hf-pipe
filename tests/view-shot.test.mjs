@@ -43,7 +43,8 @@ test("capture loop scales one physical display in one blit", () => {
 
 test("capture daemon does not stall on PowerShell stderr", () => {
   const js = readFileSync(join(here, "../src/clean-jobs.mjs"), "utf8");
-  assert.match(js, /input:\s*JSON\.stringify/);
+  assert.match(js, /capture\.child\.stdin\.end\(JSON\.stringify/);
+  assert.match(js, /const \{ stdout \} = await capture/);
   const ps1 = readFileSync(join(here, "../src/capture-loop.ps1"), "utf8");
   assert.match(ps1, /HfCap\.dll/);
   assert.match(ps1, /\$env:TEMP/);

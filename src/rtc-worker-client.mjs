@@ -57,7 +57,7 @@ export function createRtcWorkerClient(options) {
 
   return {
     isRtcUp: () => ready,
-    rtcSnapshot: () => ({ ...snapshot }),
+    rtcSnapshot: () => ({ ...snapshot, pendingCalls: pending.size }),
     handleRtcSignal(frame) {
       child.send({ kind: "signal", frame });
     },
@@ -118,7 +118,7 @@ export function spawnRtcWorker(options) {
 
   return {
     isRtcUp: () => client?.isRtcUp() === true,
-    rtcSnapshot: () => ({ ...snapshot }),
+    rtcSnapshot: () => client?.rtcSnapshot() || {},
     handleRtcSignal: (frame) => client?.handleRtcSignal(frame),
     rtcCall: (frame, timeout) => {
       if (!client) return Promise.reject(new Error("rtc worker unavailable"));

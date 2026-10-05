@@ -340,6 +340,8 @@ export function rtcSnapshot() {
     lastPongAt: lastProofAt || null,
     pongAgeMs: lastProofAt ? Date.now() - lastProofAt : null,
     peerHost: lastPeerHost || null,
+    egress: egressMux?.snapshot() || {txBytes:0, rxBytes:0, streams:0, queuedBytes:0},
+    queuedBytes: dc?.bufferedAmount || 0,
   };
 }
 

@@ -56,7 +56,7 @@ Cursor / консоль
 
 ## Требования
 
-- Node.js 22+
+- Node.js 22.15+ (системное хранилище доверенных CA)
 - Python 3 (для вызова CLI через `src/dirty.py`)
 - Доступный обеим машинам сервер Matrix (Synapse + MAS/OIDC или любой homeserver, выдающий access token)
 - TURN-сервер с поддержкой TCP или TLS (выдается через `GET /_matrix/client/v3/voip/turnServer`)

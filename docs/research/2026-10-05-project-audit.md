@@ -107,6 +107,22 @@ Clean bootstrap стартовал 06:39:18 UTC, DC открылся 06:39:37 UT
 
 ## Первичные внешние источники
 
+## Продолжение реализации: peer trust, recovery и операторский статус
+
+Подготовленный source после изменений проходит полный локальный suite: 265 tests, 265 pass, 0 fail, 0 skip. Новые проверки покрывают authenticated peer, replay после restart, сохранение TLS-проверки, shell без блокировки heartbeat, stalled supervisor и целостность полного bootstrap bundle. Это проверка source, не live приемка нового пакета.
+
+T1: Matrix sender сверяется с pinned user; отдельные Ed25519 identity устройств подписывают адресованные signaling/control сообщения. Public trust manifest включается в signed release, private identity остается DPAPI-защищенной на своей машине. Nonce сохраняется до dispatch, replay после рестарта отклоняется. Имя устройства и заявленный `env.from` больше не авторизуют сообщения. Контракт и границы: [peer-trust.md](../peer-trust.md). Новый формат требует совместной выкладки protocol 3.
+
+Recovery: bootstrap наблюдает heartbeat вне event loop supervisor и перезапускает его при зависании или сочетании stale Matrix sync и недоступного RTC. Node trust на старте объединяет default/system CA; неизвестный CA и неверный SAN продолжают отклоняться. Shell и screenshot переведены на асинхронное выполнение. Это не доказывает SLA 60 секунд на live: его еще требуется измерить после выкладки; RPC deadline и cleanup побочных процессов остаются частью пакетов 2/3.
+
+Поставка: immutable release включает node_modules, полный bootstrap bundle подписан вместе с nested release manifests; existing staged target также проверяется. Подготовлен кандидат `2f93f958de3b9d1d`, protocol 3, подписанный существующей release authority, с отдельными enrolled peer identity обеих машин. Транзакционный cutover/rollback двух bootstrap generations еще не выполнен.
+
+Операторский интерфейс: обе страницы получают состояние clean/Kilo, последнюю причину сбоя, время восстановления с отметкой превышения 60 секунд, последние операции, скорость egress и память. Отсутствующие counters не превращаются в нулевые. Kilo подтверждается только свежим успешным inference record того же build/protocol. Добавлен VBS launcher через Task Scheduler для запуска ярлыком без консоли; live установка ярлыков и визуальная проверка обеих машин еще не выполнены.
+
+При последующей проверке прежний live runtime вновь потерял RTC: dirty отправлял offer, fresh peer health отсутствовал. Штатный restart dirty не восстановил clean-pc. Запрошен ручной restart clean, так как другого доступного канала к нему нет. Причина нового clean отказа без его свежего журнала не подтверждена. На этом этапе обе live стороны остаются на прежнем protocol 2; source публикация, подготовленный кандидат и live состояние учитываются отдельно.
+
+## Первичные внешние источники (ссылки)
+
 - [undici RetryHandler pending response body, patched 7.29.1](https://github.com/advisories/GHSA-pmjh-fq2x-6v4x): релевантный класс зависания при retry, проверять на используемом RetryAgent.
 - [undici unbounded decompression, patched 7.29.1](https://github.com/advisories/GHSA-3xpg-4rpp-hhhm): риск потребления ресурсов HTTP responses; applicability требует учета фактических ответов.
 - [matrix-js-sdk room upgrade validation, fixed >=38.2.0](https://github.com/advisories/GHSA-mp7c-m3rh-r56v): зависимость затронута по версии, но rooms не используются в hop traffic.
