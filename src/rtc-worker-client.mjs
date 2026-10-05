@@ -1,8 +1,10 @@
 import { fork } from "node:child_process";
+import { randomUUID } from "node:crypto";
 
 export function createRtcWorkerClient(options) {
   let child = options.child;
   let snapshot = {};
+  let ready = false;
   const pending = new Map();
   const timeoutDefault = Number(options.timeoutMs || 20_000);
 
@@ -17,6 +19,8 @@ export function createRtcWorkerClient(options) {
   const onMessage = (message) => {
     if (message?.kind === "status") {
       snapshot = message.snapshot || {};
+      ready = message.up === true && snapshot.dc === "open";
+      snapshot = { ...snapshot, rtc: ready };
       options.onStatus?.(snapshot);
       return;
     }
@@ -47,11 +51,12 @@ export function createRtcWorkerClient(options) {
   child.on("message", onMessage);
   child.on("exit", () => {
     snapshot = {};
+    ready = false;
     rejectPending("rtc worker exited");
   });
 
   return {
-    isRtcUp: () => snapshot.dc === "open",
+    isRtcUp: () => ready,
     rtcSnapshot: () => ({ ...snapshot }),
     handleRtcSignal(frame) {
       child.send({ kind: "signal", frame });
@@ -61,7 +66,7 @@ export function createRtcWorkerClient(options) {
       return { ok: true, action: "recycle" };
     },
     rtcCall(frame, timeoutMs = timeoutDefault) {
-      const requestId = String(frame?.id || `${Date.now()}-${Math.random()}`);
+      const requestId = randomUUID();
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(requestId);
@@ -72,6 +77,8 @@ export function createRtcWorkerClient(options) {
       });
     },
     close() {
+      ready = false;
+      snapshot = {};
       rejectPending("rtc worker closed");
       child.kill();
     },
@@ -110,7 +117,7 @@ export function spawnRtcWorker(options) {
   start();
 
   return {
-    isRtcUp: () => snapshot.dc === "open",
+    isRtcUp: () => client?.isRtcUp() === true,
     rtcSnapshot: () => ({ ...snapshot }),
     handleRtcSignal: (frame) => client?.handleRtcSignal(frame),
     rtcCall: (frame, timeout) => {

@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -66,16 +66,34 @@ export function unprotectDpapiText(path) {
 export const protectPrivateKey = protectDpapiText;
 export const loadPrivateKey = unprotectDpapiText;
 
+export function validateReleaseKeyPair(privateKey, publicKey) {
+  const secret = createPrivateKey(privateKey);
+  const published = createPublicKey(publicKey);
+  if (secret.asymmetricKeyType !== "ed25519" || published.asymmetricKeyType !== "ed25519") {
+    throw new Error("Release signing keys must use Ed25519");
+  }
+  const derived = createPublicKey(secret).export({ type: "spki", format: "der" });
+  const actual = published.export({ type: "spki", format: "der" });
+  if (!derived.equals(actual)) throw new Error("Release signing key pair mismatch; trust was not changed");
+}
+
 export function ensureReleaseKeyPair(dir) {
   mkdirSync(dir, { recursive: true });
   const privatePath = join(dir, "release-private.dpapi");
   const publicPath = join(dir, "release-public.pem");
-  if (existsSync(privatePath) && existsSync(publicPath)) {
+  const hasPrivate = existsSync(privatePath);
+  const hasPublic = existsSync(publicPath);
+  if (hasPrivate !== hasPublic) {
+    throw new Error("Incomplete release signing key pair; restore the missing key instead of rotating trust");
+  }
+  if (hasPrivate && hasPublic) {
+    const publicKey = readFileSync(publicPath, "utf8");
+    validateReleaseKeyPair(loadPrivateKey(privatePath), publicKey);
     return {
       created: false,
       privatePath,
       publicPath,
-      publicKey: readFileSync(publicPath, "utf8"),
+      publicKey,
     };
   }
   const pair = generateKeyPairSync("ed25519");

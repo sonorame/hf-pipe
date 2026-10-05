@@ -95,6 +95,16 @@
 
 Свежая проверка Kilo 7.3.54/OpenAI через существующий live runtime выполнена повторно на отдельном тестовом порту: GPT-6 Astra и GPT-6 Luna вернули `PIPE_OK`, `error:null`. Первая попытка завершилась до inference из-за занятого диагностического порта 18102; повтор использовал 18243 и отдельные файлы результата/журнала. Models catalog request к models.dev получает 403 по существующей allowlist; это не помешало двум inference запросам с явно заданным каталогом. Backend использовал существующий ChatGPT OAuth и проверку TLS с отдельным CA bundle; auth не переносился. Запросы не вызывали инструменты и не меняли рабочие файлы. Это проверка текущего live пакета, не доказательство fresh deployment подготовленного source tree.
 
+## Начало реализации и восстановление, 2026-10-05
+
+Труба восстановлена после штатного restart dirty и перезапуска пользователем HFPipe-clean. До clean restart dirty имел свежий Matrix sync и отправлял offer без ответа. Журнал clean содержит SELF_SIGNED_CERT_IN_CHAIN для Matrix sync/devices/sendToDevice начиная с 06:16:43 UTC до 06:38:58 UTC. Это подтверждает отказ TLS-проверки в clean процессе; источник изменения цепочки/CA пока не установлен. Остановка машины и зависание shell не подтверждены. TLS-проверка не отключалась.
+
+Clean bootstrap стартовал 06:39:18 UTC, DC открылся 06:39:37 UTC. Это восстановление с ручным вмешательством, не выполнение автономного SLA 60 секунд. После него clean_context, shell hostname и read прошли; свежий Kilo 7.3.54/OpenAI ChatGPT inference вернул PIPE_OK на Astra и Luna, обе error:null. Обе стороны остаются на подписанном a3b26f918be515b1/protocol 2.
+
+Первый source-пакет в codex/hop-reliability: R6 — неполная signing pair завершается отказом без перезаписи surviving key; existing pair проверяется на Ed25519 и совпадение public/private. T7 — отрицательная readiness worker преобладает над stale dc:open. T8 — IPC request identity независима от task.id. Undici обновлен до 7.29.1, Matrix SDK до 38.2.0, production npm audit: 0 vulnerabilities. T1 authenticated peer еще не реализован и пакет 1 целиком не закрыт.
+
+Новые RTC регрессии воспроизвели оба дефекта до исправления, после исправления прошли. Выборочные проверки: 7/7. Полный suite: 251 tests, 248 pass, 3 fail, 0 skip; прежние dirty PowerShell timeout в DPAPI, session refresh DPAPI и archive. Они не отключены. Измененный пакет пока не выложен live; свежий Kilo проверяет восстановленный прежний runtime. Для нового пакета обязательны Windows CI и последующая полная signed deployment/live проверка. Следующий recovery шаг — безопасная загрузка/обновление CA trust и контроль supervisor heartbeat вне его event loop; причина смены доверия требует проверки.
+
 ## Первичные внешние источники
 
 - [undici RetryHandler pending response body, patched 7.29.1](https://github.com/advisories/GHSA-pmjh-fq2x-6v4x): релевантный класс зависания при retry, проверять на используемом RetryAgent.
