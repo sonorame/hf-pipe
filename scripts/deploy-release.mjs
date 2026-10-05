@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { loadEnvFile, localDir, sessionFile } from "../src/config.mjs";
+import { loadEnvFile, localDir, sessionFile, secretsDir } from "../src/config.mjs";
+import { loadPeerSession } from "../src/peer-session.mjs";
 import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
 import { decorateControlFrame } from "../src/protocol-version.mjs";
 import { promoteRelease } from "../src/release-runtime.mjs";
@@ -27,18 +28,9 @@ const homeserver = String(session.homeserver || process.env.MATRIX_HOMESERVER_UR
 const token = session.access_token;
 const ownDevice = session.device_id;
 if (!homeserver || !token || !ownDevice) throw new Error("dirty Matrix session is incomplete");
-
-const devicesResponse = await pinnedFetch(`${homeserver}/_matrix/client/v3/devices`, {
-  headers: { Authorization: `Bearer ${token}` },
-});
-const devicesText = await devicesResponse.text();
-if (!devicesResponse.ok) throw new Error(`devices ${devicesResponse.status} ${devicesText.slice(0, 200)}`);
-const devices = JSON.parse(devicesText).devices || [];
-const peer = devices
-  .filter((device) => device.device_id && device.device_id !== ownDevice)
-  .filter((device) => /hf-matrix/i.test(String(device.display_name || "")))
-  .sort((a, b) => Number(b.last_seen_ts || 0) - Number(a.last_seen_ts || 0))[0]?.device_id;
-if (!peer) throw new Error("clean hf-matrix device not found");
+const peerSession = loadPeerSession({ side: "dirty", session,
+  releaseRoot: join(runtimeRoot, "releases", state.current), secretsRoot: secretsDir() });
+const peer = peerSession.peer.deviceId;
 
 const outgoingDir = join(runtimeRoot, "outgoing");
 mkdirSync(outgoingDir, { recursive: true });
@@ -65,16 +57,11 @@ async function sendControl(frame) {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       messages: {
-        [session.user_id]: {
-          [peer]: {
-            hf: 1,
-            lane: "control",
-            from: ownDevice,
-            frame: decorateControlFrame(frame, {
+        [peerSession.peer.userId]: {
+          [peer]: peerSession.seal("control", decorateControlFrame(frame, {
               buildId: manifest.buildId,
               protocolVersion: manifest.protocolVersion,
-            }),
-          },
+            })),
         },
       },
     }),

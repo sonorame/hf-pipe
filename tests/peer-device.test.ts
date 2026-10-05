@@ -66,10 +66,11 @@ test("remembered peer is fresh within 15s", () => {
   assert.equal(isFreshPeer(null, 5_000), false);
 });
 
-test("index.mjs wires peer fallback and error cause", () => {
+test("daemon uses signed peer enrollment rather than device-name discovery", () => {
   const src = readFileSync(new URL("../src/index.mjs", import.meta.url), "utf8");
-  assert.match(src, /resolvePeerId/);
+  assert.match(src, /peerSession\.peer\.deviceId/);
+  assert.doesNotMatch(src, /pickPeerFromDevices|resolvePeerId/);
   assert.match(src, /formatErrorChain/);
-  assert.match(src, /from: myDevice/);
+  assert.match(src, /peerSession\?\.open\(content, event\.getSender/);
   assert.match(src, /rtcSeenIds/);
 });

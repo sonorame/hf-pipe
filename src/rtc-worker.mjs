@@ -12,6 +12,7 @@ const side = String(process.argv[2] || process.env.HF_SIDE || "").toLowerCase();
 if (!["dirty", "clean"].includes(side)) throw new Error("rtc-worker side must be dirty or clean");
 
 const rpcWaiters = new Map();
+process.on("disconnect", () => process.exit(7));
 
 function send(message) {
   process.send?.(message);

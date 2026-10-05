@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { quarantineStrayReleaseFiles, recordReleaseFailure, verifyRelease } from "./release-runtime.mjs";
 import { hopProtocolVersion } from "./protocol-version.mjs";
-import { renderCasualBoardHtml } from "./tray-status.mjs";
+import { renderOperationalBoardHtml } from "./operational-board.mjs";
 
 function runtimeRoot() {
   return process.env.HF_RUNTIME_ROOT || join(homedir(), ".hf-pipe", "runtime");
@@ -22,7 +22,7 @@ function failureReason(code, signal, stderr) {
 }
 
 function boardHtml() {
-  return renderCasualBoardHtml();
+  return renderOperationalBoardHtml();
 }
 
 function showToast(text) {
@@ -62,13 +62,16 @@ export async function runBootstrap(side, options = {}) {
   };
   let notifiedRtc = null;
   let notifyTimer = null;
+  let recoveryStartedAt = Date.now();
   if (!once) {
     const port = Number(process.env.HF_SUPERVISOR_PORT || 18764);
     http
       .createServer((req, res) => {
         if (req.url === "/status") {
           res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-          res.end(JSON.stringify(status));
+          res.end(JSON.stringify({ ...status,
+            recovery: { elapsedMs: recoveryStartedAt ? Date.now() - recoveryStartedAt : 0, budgetMs: 60_000 },
+            reportAgeMs: status.reportReceivedAt ? Date.now() - status.reportReceivedAt : null }));
           return;
         }
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
@@ -114,6 +117,17 @@ export async function runBootstrap(side, options = {}) {
 
       let booted = false;
       let stderr = "";
+      let watchdogReason = null;
+      let lastReportAt = Date.now();
+      let rtcDownSince = 0;
+      status.report = null;
+      const heartbeatMs = Number(process.env.HF_SUPERVISOR_HEARTBEAT_MS || 15_000);
+      const stopForRecovery = (reason) => {
+        if (watchdogReason) return;
+        watchdogReason = reason;
+        log.write(`${new Date().toISOString()} watchdog ${releaseId} ${reason}\n`);
+        child.kill();
+      };
       const child = fork(join(releaseDir, "src", "index.mjs"), [side], {
         cwd: releaseDir,
         env: {
@@ -132,13 +146,22 @@ export async function runBootstrap(side, options = {}) {
         log.write(chunk);
       });
       child.on("message", (message) => {
+        if (message?.kind !== "supervisor-health") return;
+        lastReportAt = Date.now();
         if (message?.kind === "supervisor-health" && message.phase === "booted") {
-          booted = true;
           log.write(`${new Date().toISOString()} booted ${releaseId}\n`);
+        }
+        if (message.phase === "ready") {
+          booted = true;
+          clearTimeout(startupTimer);
+          log.write(`${new Date().toISOString()} ready ${releaseId}\n`);
         }
         if (message?.kind === "supervisor-health" && message.phase === "running") {
           status.report = message;
+          status.reportReceivedAt = Date.now();
           const rtc = Boolean(message.local?.rtc);
+          if (rtc) recoveryStartedAt = 0;
+          else if (!recoveryStartedAt) recoveryStartedAt = Date.now();
           if (rtc !== notifiedRtc && side === "dirty") {
             clearTimeout(notifyTimer);
             notifyTimer = setTimeout(() => {
@@ -150,11 +173,28 @@ export async function runBootstrap(side, options = {}) {
         }
       });
       const startupTimer = setTimeout(() => {
-        if (!booted) child.kill();
-      }, Number(process.env.HF_STARTUP_BOOT_MS || 15_000));
+        if (!booted) stopForRecovery("startup readiness deadline");
+      }, Number(process.env.HF_STARTUP_BOOT_MS || 30_000));
+      const watchdog = setInterval(() => {
+        const now = Date.now();
+        if (now - lastReportAt >= heartbeatMs) {
+          stopForRecovery("supervisor heartbeat stalled");
+          return;
+        }
+        const local = status.report?.local;
+        if (local?.rtc === true) rtcDownSince = 0;
+        else if (local && !rtcDownSince) rtcDownSince = now;
+        if (local && rtcDownSince && now - rtcDownSince >= 10_000 &&
+            Number(local.matrixSyncAgeMs) >= 20_000) {
+          stopForRecovery("Matrix sync stale while RTC unavailable; reload process trust");
+        }
+      }, Number(process.env.HF_SUPERVISOR_CHECK_MS || 1000));
       child.on("exit", (code, signal) => {
         clearTimeout(startupTimer);
-        if (!booted) {
+        clearInterval(watchdog);
+        status.report = null;
+        if (!recoveryStartedAt) recoveryStartedAt = Date.now();
+        if (!booted && !watchdogReason) {
           recordReleaseFailure(root, releaseId, {
             threshold,
             reason: failureReason(code, signal, stderr),
@@ -167,6 +207,7 @@ export async function runBootstrap(side, options = {}) {
           code: code ?? null,
           signal: signal ?? null,
           booted,
+          watchdogReason,
         };
         if (once) {
           log.end();

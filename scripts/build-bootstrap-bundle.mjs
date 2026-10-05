@@ -7,19 +7,22 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { packRelease } from "../src/release-transfer.mjs";
-import { verifyRelease } from "../src/release-runtime.mjs";
+import { buildReleaseManifest, verifyRelease } from "../src/release-runtime.mjs";
+import { ensureReleaseKeyPair, loadPrivateKey } from "../src/release-key.mjs";
 
-const runtimeRoot = process.argv[2];
-const archivePath = process.argv[3];
-if (!runtimeRoot || !archivePath) {
-  console.error("usage: node scripts/build-bootstrap-bundle.mjs <runtime-root> <archive.zip>");
-  process.exit(1);
-}
+export function buildBootstrapBundle(options) {
+const runtimeRoot = options.runtimeRoot;
+const archivePath = options.archivePath;
+
+if (!runtimeRoot) throw new Error("runtimeRoot is required");
+if (!options.privateKey) throw new Error("A bootstrap bundle must be signed with the current release key");
 
 const state = JSON.parse(readFileSync(join(runtimeRoot, "state.json"), "utf8"));
 if (!state.current) throw new Error("runtime has no current release");
-verifyRelease(join(runtimeRoot, "releases", state.current), {
+const releaseManifest = verifyRelease(join(runtimeRoot, "releases", state.current), {
   publicKey: readFileSync(join(runtimeRoot, "release-public.pem"), "utf8"),
 });
 const stage = join(runtimeRoot, "outgoing", `bootstrap-${state.current}`);
@@ -28,6 +31,9 @@ mkdirSync(join(stage, "releases"), { recursive: true });
 
 for (const name of [
   "bootstrap.mjs",
+  "operational-board.mjs",
+  "start-hop.vbs",
+  "protocol-version.mjs",
   "release-runtime.mjs",
   "tray-status.mjs",
   "release-public.pem",
@@ -39,6 +45,9 @@ for (const name of [
   "install-watchdog.cmd",
   "start-clean.cmd",
   "start-dirty.cmd",
+  "cursor-egress.ps1",
+  "cursor-egress-apply.mjs",
+  "cursor-proxy-config.mjs",
 ]) {
   const source = join(runtimeRoot, name);
   if (!existsSync(source)) throw new Error(`bootstrap file missing ${name}`);
@@ -54,4 +63,17 @@ writeFileSync(
   `${JSON.stringify({ current: state.current, previous: null, bad: [], failures: {} }, null, 2)}\n`,
 );
 
-console.log(JSON.stringify({ buildId: state.current, ...packRelease(stage, archivePath) }));
+if (options.nodePath) cpSync(options.nodePath, join(stage, "node.exe"));
+if (existsSync(join(runtimeRoot,"task-host.exe"))) cpSync(join(runtimeRoot,"task-host.exe"),join(stage,"task-host.exe"));
+if (options.privateKey) {
+  buildReleaseManifest(stage, {buildId: state.current, protocolVersion: releaseManifest.protocolVersion, privateKey: options.privateKey, entrypoint: "bootstrap.mjs"});
+  verifyRelease(stage, {publicKey: readFileSync(join(runtimeRoot,"release-public.pem"),"utf8")});
+}
+return {buildId: state.current, stage, ...(archivePath ? packRelease(stage, archivePath) : {})};
+}
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  if (!process.argv[2] || !process.argv[3]) throw new Error("usage: node scripts/build-bootstrap-bundle.mjs <runtime-root> <archive.zip>");
+  const keys = ensureReleaseKeyPair(process.env.HF_RELEASE_KEY_DIR || join(homedir(), ".hf-pipe", "keys"));
+  console.log(JSON.stringify(buildBootstrapBundle({runtimeRoot:process.argv[2],archivePath:process.argv[3],privateKey:loadPrivateKey(keys.privatePath)})));
+}

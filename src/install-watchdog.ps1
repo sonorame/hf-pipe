@@ -17,9 +17,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $launcherRoot "task-host.ps1"))) {
   $launcherRoot = $Root
 }
 $hostScript = Join-Path $launcherRoot "task-host.ps1"
+$guiHost = Join-Path $launcherRoot "task-host.exe"
 $supervisorScript = Join-Path $launcherRoot "supervisor-host.ps1"
 if (-not (Test-Path -LiteralPath $hostScript)) { throw "missing $hostScript" }
 if (-not (Test-Path -LiteralPath $supervisorScript)) { throw "missing $supervisorScript" }
+if (-not (Test-Path -LiteralPath $guiHost)) { throw "missing signed windowless task-host.exe; build and install a complete bootstrap bundle" }
 $isProductionTask = [string]::IsNullOrWhiteSpace($TaskName)
 $resolvedTaskName = if ($isProductionTask) { "HFPipe-$Side" } else { $TaskName }
 
@@ -36,6 +38,7 @@ function Stop-HfSideProcesses {
     if (-not $isLegacyDirtyHost -and $cl -notmatch $sideNeedle) { return }
     $isHop = $isLegacyDirtyHost -or
       ($cl -match "task-host\.ps1") -or
+      ($cl -match "task-host\.exe") -or
       ($cl -match "supervisor-host\.ps1") -or
       ($cl -match "supervisor-launch\.vbs") -or
       ($cl -match "bootstrap\.mjs") -or
@@ -64,28 +67,20 @@ foreach ($old in @($oldTasks | Select-Object -Unique)) {
 
 $userId = if ($env:USERDOMAIN) { "$env:USERDOMAIN\$env:USERNAME" } else { $env:USERNAME }
 $actionArguments = @(
-  "-NoProfile",
-  "-STA",
-  "-WindowStyle",
-  "Hidden",
-  "-ExecutionPolicy",
-  "Bypass",
-  "-File",
-  "`"$hostScript`"",
-  "-Side",
+  "--side",
   $Side,
-  "-Root",
+  "--root",
   "`"$Root`"",
-  "-StatusUrl",
+  "--status-url",
   "`"$StatusUrl`"",
-  "-DetailsUrl",
+  "--details-url",
   "`"$DetailsUrl`""
 )
 if (-not [string]::IsNullOrWhiteSpace($TrayStateFile)) {
-  $actionArguments += @("-TrayStateFile", "`"$TrayStateFile`"")
+  $actionArguments += @("--tray-state-file", "`"$TrayStateFile`"")
 }
 $action = New-ScheduledTaskAction `
-  -Execute "powershell.exe" `
+  -Execute $guiHost `
   -Argument ($actionArguments -join " ") `
   -WorkingDirectory $Root
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
@@ -99,6 +94,8 @@ $settings = New-ScheduledTaskSettingsSet `
   -ExecutionTimeLimit ([TimeSpan]::Zero) `
   -MultipleInstances IgnoreNew
 $settings.Hidden = $true
+$settings.IdleSettings.StopOnIdleEnd = $false
+$settings.IdleSettings.RestartOnIdle = $false
 
 Register-ScheduledTask `
   -TaskName $resolvedTaskName `
@@ -110,6 +107,13 @@ Register-ScheduledTask `
   -Force | Out-Null
 
 if ($isProductionTask) {
+  $shortcutShell = New-Object -ComObject WScript.Shell
+  $shortcut = $shortcutShell.CreateShortcut((Join-Path ([Environment]::GetFolderPath("Desktop")) "hf-pipe $Side.lnk"))
+  $shortcut.TargetPath = Join-Path $env:WINDIR "System32\wscript.exe"
+  $shortcut.Arguments = "`"$(Join-Path $Root 'start-hop.vbs')`" $Side"
+  $shortcut.WorkingDirectory = $Root
+  $shortcut.WindowStyle = 7
+  $shortcut.Save()
   $startup = [Environment]::GetFolderPath("Startup")
   foreach ($old in @("hf-$Side.lnk", $(if ($Side -eq "dirty") { "CursorMCP.lnk" }))) {
     if ([string]::IsNullOrWhiteSpace($old)) { continue }

@@ -95,10 +95,48 @@
 
 Свежая проверка Kilo 7.3.54/OpenAI через существующий live runtime выполнена повторно на отдельном тестовом порту: GPT-6 Astra и GPT-6 Luna вернули `PIPE_OK`, `error:null`. Первая попытка завершилась до inference из-за занятого диагностического порта 18102; повтор использовал 18243 и отдельные файлы результата/журнала. Models catalog request к models.dev получает 403 по существующей allowlist; это не помешало двум inference запросам с явно заданным каталогом. Backend использовал существующий ChatGPT OAuth и проверку TLS с отдельным CA bundle; auth не переносился. Запросы не вызывали инструменты и не меняли рабочие файлы. Это проверка текущего live пакета, не доказательство fresh deployment подготовленного source tree.
 
+## Начало реализации и восстановление, 2026-10-05
+
+Труба восстановлена после штатного restart dirty и перезапуска пользователем HFPipe-clean. До clean restart dirty имел свежий Matrix sync и отправлял offer без ответа. Журнал clean содержит SELF_SIGNED_CERT_IN_CHAIN для Matrix sync/devices/sendToDevice начиная с 06:16:43 UTC до 06:38:58 UTC. Это подтверждает отказ TLS-проверки в clean процессе; источник изменения цепочки/CA пока не установлен. Остановка машины и зависание shell не подтверждены. TLS-проверка не отключалась.
+
+Clean bootstrap стартовал 06:39:18 UTC, DC открылся 06:39:37 UTC. Это восстановление с ручным вмешательством, не выполнение автономного SLA 60 секунд. После него clean_context, shell hostname и read прошли; свежий Kilo 7.3.54/OpenAI ChatGPT inference вернул PIPE_OK на Astra и Luna, обе error:null. Обе стороны остаются на подписанном a3b26f918be515b1/protocol 2.
+
+Первый source-пакет в codex/hop-reliability: R6 — неполная signing pair завершается отказом без перезаписи surviving key; existing pair проверяется на Ed25519 и совпадение public/private. T7 — отрицательная readiness worker преобладает над stale dc:open. T8 — IPC request identity независима от task.id. Undici обновлен до 7.29.1, Matrix SDK до 38.2.0, production npm audit: 0 vulnerabilities. T1 authenticated peer еще не реализован и пакет 1 целиком не закрыт.
+
+Новые RTC регрессии воспроизвели оба дефекта до исправления, после исправления прошли. Выборочные проверки: 7/7. Полный suite: 251 tests, 248 pass, 3 fail, 0 skip; прежние dirty PowerShell timeout в DPAPI, session refresh DPAPI и archive. Они не отключены. Измененный пакет пока не выложен live; свежий Kilo проверяет восстановленный прежний runtime. Для нового пакета обязательны Windows CI и последующая полная signed deployment/live проверка. Следующий recovery шаг — безопасная загрузка/обновление CA trust и контроль supervisor heartbeat вне его event loop; причина смены доверия требует проверки.
+
 ## Первичные внешние источники
+
+## Продолжение реализации: peer trust, recovery и операторский статус
+
+Подготовленный source после изменений проходит полный локальный suite: 265 tests, 265 pass, 0 fail, 0 skip. Новые проверки покрывают authenticated peer, replay после restart, сохранение TLS-проверки, shell без блокировки heartbeat, stalled supervisor и целостность полного bootstrap bundle. Это проверка source, не live приемка нового пакета.
+
+T1: Matrix sender сверяется с pinned user; отдельные Ed25519 identity устройств подписывают адресованные signaling/control сообщения. Public trust manifest включается в signed release, private identity остается DPAPI-защищенной на своей машине. Nonce сохраняется до dispatch, replay после рестарта отклоняется. Имя устройства и заявленный `env.from` больше не авторизуют сообщения. Контракт и границы: [peer-trust.md](../peer-trust.md). Новый формат требует совместной выкладки protocol 3.
+
+Recovery: bootstrap наблюдает heartbeat вне event loop supervisor и перезапускает его при зависании или сочетании stale Matrix sync и недоступного RTC. Node trust на старте объединяет default/system CA; неизвестный CA и неверный SAN продолжают отклоняться. Shell и screenshot переведены на асинхронное выполнение. Это не доказывает SLA 60 секунд на live: его еще требуется измерить после выкладки; RPC deadline и cleanup побочных процессов остаются частью пакетов 2/3.
+
+Поставка: immutable release включает node_modules, полный bootstrap bundle подписан вместе с nested release manifests; existing staged target также проверяется. Подготовлен кандидат `2f93f958de3b9d1d`, protocol 3, подписанный существующей release authority, с отдельными enrolled peer identity обеих машин. Транзакционный cutover/rollback двух bootstrap generations еще не выполнен.
+
+Операторский интерфейс: обе страницы получают состояние clean/Kilo, последнюю причину сбоя, время восстановления с отметкой превышения 60 секунд, последние операции, скорость egress и память. Отсутствующие counters не превращаются в нулевые. Kilo подтверждается только свежим успешным inference record того же build/protocol. Добавлен VBS launcher через Task Scheduler для запуска ярлыком без консоли; live установка ярлыков и визуальная проверка обеих машин еще не выполнены.
+
+При последующей проверке прежний live runtime вновь потерял RTC: dirty отправлял offer, fresh peer health отсутствовал. Штатный restart dirty не восстановил clean-pc. Запрошен ручной restart clean, так как другого доступного канала к нему нет. Причина нового clean отказа без его свежего журнала не подтверждена. На этом этапе обе live стороны остаются на прежнем protocol 2; source публикация, подготовленный кандидат и live состояние учитываются отдельно.
+
+## Первичные внешние источники (ссылки)
 
 - [undici RetryHandler pending response body, patched 7.29.1](https://github.com/advisories/GHSA-pmjh-fq2x-6v4x): релевантный класс зависания при retry, проверять на используемом RetryAgent.
 - [undici unbounded decompression, patched 7.29.1](https://github.com/advisories/GHSA-3xpg-4rpp-hhhm): риск потребления ресурсов HTTP responses; applicability требует учета фактических ответов.
 - [matrix-js-sdk room upgrade validation, fixed >=38.2.0](https://github.com/advisories/GHSA-mp7c-m3rh-r56v): зависимость затронута по версии, но rooms не используются в hop traffic.
 - [Skills Matt Pocock](https://github.com/mattpocock/skills/tree/main): grill-me делегирует grilling; использованы research и codebase-design для сбора первичных доказательств и проектирования следующих исправлений. Другие полезные навыки уже установлены.
 - [i-have-adhd](https://github.com/ayghri/i-have-adhd): установлен и применяется к общению в этом чате.
+
+## Live проверка запуска и блокировки, 2026-10-05
+
+Обе стороны переведены целыми подписанными bootstrap bundles на build `2a019125423b683c`, protocol 3. Старые generations сохранены для отката. Каждая задача HFPipe запускает `task-host.exe` (Windows GUI subsystem), который исполняет PowerShell внутри собственного процесса; root-launch через powershell.exe больше не используется. Ярлыки обеих машин обновлены. Реальный Windows test запускает GUI host без windowsHide и подтверждает GetConsoleWindow=0. Полная локальная проверка: 266/266, без пропусков; шесть GitHub jobs Node 22/24 на Windows/Linux/macOS прошли для commit 29d1279.
+
+Обнаружен автоматический сон dirty от сети через 5 минут (Modern Standby); сон приостанавливает desktop процессы. По согласованию пользователя автоматический сон от сети отключен на обеих машинах, значения на батарее сохранены. Пользователь после ухода/возвращения подтвердил: труба жива, консольных окон нет. Продолжительность этого пользовательского эпизода не измерена; он не доказывает recovery SLA при всех сбоях.
+
+После cutover clean_context снова успешен; обе стороны RTC connected, отчеты свежие. Подтверждены задачи GUI host и их рабочие процессы на clean/dirty. Обе страницы 18764/18765 визуально проверены: состояние, причина сбоя, восстановление, операции, трафик и память. Исправлено исключение egress counters из статуса 18765.
+
+Kilo с установленной подпиской ChatGPT вернул PIPE_OK через эту generation на gpt-6-luna. Перед этим отдельная проверка gpt-6-astra завершилась таймаутом; успешный Luna запрос не скрывает этот факт и не подтверждает доступность всех моделей. Свежие verification records отражают только проверенную модель.
+
+Остаются пункты аудита: общий бюджет запроса/восстановления 60 секунд, ограничение ресурсов и отмена egress, полноценный тиражируемый транзакционный updater, дополнительные fault-injection проверки. Первичная выкладка двух сторон завершена; весь план аудита еще не закрыт.

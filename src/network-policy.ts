@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import dns from "node:dns";
 import net from "node:net";
+import tls from "node:tls";
 import { formatErrorChain } from "./error-chain.js";
 import { mapKeysUploadResponse } from "./hop-client-mode.js";
 
@@ -114,12 +115,15 @@ export const KEEP_ALIVE_TIMEOUT_MS = 60_000;
 
 export const KEEP_ALIVE_MAX_TIMEOUT_MS = 600_000;
 
-export function hopUndiciAgentOptions(lookup: typeof dns.lookup): {
+export function hopUndiciAgentOptions(
+  lookup: typeof dns.lookup,
+  getCertificates = tls.getCACertificates,
+): {
   connectTimeout: number;
   connections: number;
   keepAliveTimeout: number;
   keepAliveMaxTimeout: number;
-  connect: { lookup: typeof dns.lookup; timeout: number };
+  connect: { lookup: typeof dns.lookup; timeout: number; ca: string[] };
 } {
   return {
     connectTimeout: CONNECT_TIMEOUT_MS,
@@ -129,6 +133,7 @@ export function hopUndiciAgentOptions(lookup: typeof dns.lookup): {
     connect: {
       lookup,
       timeout: CONNECT_TIMEOUT_MS,
+      ca: [...new Set([...getCertificates("default"), ...getCertificates("system")])],
     },
   };
 }

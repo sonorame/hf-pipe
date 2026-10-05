@@ -14,14 +14,12 @@ import {
   eventType,
   findMatrixClientModule,
   sessionUserId,
-  peerNameNeedles,
   secretsDir,
 } from "./config.mjs";
 import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
 import { shouldRecycleAfterClockJump, shouldExitOnSyncDead } from "../dist/watchdog-clock.js";
 import { claimHopInstance, hopListenBusyExitCode } from "../dist/hop-instance.js";
 import { formatErrorChain } from "../dist/error-chain.js";
-import { isFreshPeer, pickPeerFromDevices, resolvePeerId } from "../dist/peer-device.js";
 import { runCleanJob } from "./clean-jobs.mjs";
 import { httpPageKind } from "./hop-surface.mjs";
 import { readHotfolderTempConfig, sweepAllTemp } from "./hotfolder-temp.mjs";
@@ -29,7 +27,6 @@ import {
   hopRestartDelayMs,
   parseDoctorStdout,
   parseHopControl,
-  renderHopBoardHtml,
   shapeHopStatus,
 } from "../dist/hop-board.js";
 import { pushHopLog, readHopLogAfter } from "../dist/hop-log.js";
@@ -43,6 +40,9 @@ import {
   refreshSession,
 } from "./session-auth.mjs";
 import { protectDpapiText } from "./release-key.mjs";
+import { homedir } from "node:os";
+import { renderOperationalBoardHtml } from "./operational-board.mjs";
+import { loadPeerSession } from "./peer-session.mjs";
 
 loadEnvFile();
 applyNodeNetworkPolicy();
@@ -53,6 +53,10 @@ process.send?.({
   protocolVersion: hopProtocolVersion(),
   pid: process.pid,
 });
+const startupHeartbeat = setInterval(() => process.send?.({
+  kind: "supervisor-health", phase: "starting", pid: process.pid,
+}), 2000);
+startupHeartbeat.unref();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EVENT_TYPE = eventType();
@@ -62,8 +66,15 @@ const POLL_MS = 700;
 
 const sessionPath = sessionFile();
 let userId = "";
+let peerSession = null;
 let lastMatrixSyncAt = 0;
 let lastError = null;
+let recoveryStartedAt = Date.now();
+function recoveryStatus() {
+  if (rtcMod?.isRtcUp?.()) recoveryStartedAt = 0;
+  else if (!recoveryStartedAt) recoveryStartedAt = Date.now();
+  return { elapsedMs: recoveryStartedAt ? Date.now() - recoveryStartedAt : 0, budgetMs: 60_000 };
+}
 const traffic = {
   matrixTxMessages: 0,
   matrixTxBytes: 0,
@@ -89,6 +100,7 @@ function getSeenPath() {
 
 const CLEAN_ROOTS = cleanRoots();
 const DIRTY_LOCAL = localDir();
+const kiloVerification = () => loadJson(join(process.env.HF_RUNTIME_ROOT || join(homedir(), ".hf-pipe", "runtime"), "local", "kilo-verification.json"), null);
 
 const origErr = console.error.bind(console);
 console.error = (...args) => {
@@ -276,20 +288,6 @@ function saveSeen(seen) {
   });
 }
 
-function parseEnvelope(input) {
-  if (!input) return null;
-  if (typeof input === "object" && input.hf === 1 && input.lane && input.frame) return input;
-  if (typeof input !== "string") return null;
-  const raw = input.startsWith("HF|") ? input.slice(3) : input;
-  try {
-    const obj = JSON.parse(raw);
-    if (obj && obj.hf === 1 && obj.lane && obj.frame) return obj;
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 function hsBase() {
   return String(process.env.MATRIX_HOMESERVER_URL || "").replace(/\/$/, "");
 }
@@ -298,38 +296,9 @@ function accessToken() {
   return process.env.MATRIX_ACCESS_TOKEN || "";
 }
 
-let peerCache = { id: "", at: 0 };
-let incomingPeer = "";
-
-async function resolvePeerDevice(myDevice) {
-  const envPeer = process.env.HF_PEER_DEVICE || "";
-  const now = Date.now();
-  if (!envPeer && isFreshPeer(peerCache.id ? peerCache : null, now)) {
-    return peerCache.id;
-  }
-  let listed = null;
-  let listFailed = false;
-  try {
-    const res = await pinnedFetch(`${hsBase()}/_matrix/client/v3/devices`, {
-      headers: { Authorization: `Bearer ${accessToken()}` },
-    });
-    const text = await res.text();
-    if (!res.ok) throw new Error(`devices ${res.status} ${text.slice(0, 180)}`);
-    listed = pickPeerFromDevices(JSON.parse(text).devices || [], myDevice, peerNameNeedles(sideNow()));
-  } catch (e) {
-    listFailed = true;
-    log("peer", formatErrorChain(e));
-  }
-  const got = resolvePeerId({
-    envPeer: envPeer || undefined,
-    listed,
-    incoming: incomingPeer || undefined,
-    remembered: peerCache.id ? peerCache : null,
-    listFailed,
-    now,
-  });
-  peerCache = { id: got.id, at: now };
-  return got.id;
+async function resolvePeerDevice() {
+  if (!peerSession) throw new Error("Peer enrollment must be loaded before Matrix signaling");
+  return peerSession.peer.deviceId;
 }
 
 async function bootClient(session) {
@@ -365,7 +334,7 @@ async function bootClient(session) {
 async function sendFrame(client, lane, frame) {
   const myDevice = client.getDeviceId?.() || process.env.MATRIX_DEVICE_ID;
   const outgoing = lane === "rtc" || lane === "control" ? decorateControlFrame(frame) : frame;
-  const env = { hf: 1, lane, frame: outgoing, from: myDevice };
+  const env = peerSession.seal(lane, outgoing);
   const raw = JSON.stringify(env);
   if (raw.length > MAX_EVENT) {
     throw new Error(`frame ${frame.id} too large (${raw.length} > ${MAX_EVENT})`);
@@ -383,7 +352,7 @@ async function sendFrame(client, lane, frame) {
     },
     body: JSON.stringify({
       messages: {
-        [userId]: {
+        [peerSession.peer.userId]: {
           [peer]: env,
         },
       },
@@ -624,7 +593,7 @@ function startDirtyHttp() {
     const kind = httpPageKind(req.method, url.pathname);
     if (kind === "board") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(renderHopBoardHtml());
+      res.end(renderOperationalBoardHtml());
       return;
     }
     if (kind === "status") {
@@ -632,12 +601,14 @@ function startDirtyHttp() {
       jsonRes(
         res,
         200,
-        shapeHopStatus({
+        { ...shapeHopStatus({
           rtc: Boolean(rtcMod?.isRtcUp?.()),
           pid: process.pid,
           side: sideNow(),
           ...snap,
-        }),
+        }), egress: snap.egress, pendingCalls: snap.pendingCalls,
+        buildId: process.env.HF_BUILD_ID || "dev", protocolVersion: hopProtocolVersion(),
+        lastError, traffic, memoryBytes: process.memoryUsage().rss, kiloVerification: kiloVerification(), recovery: recoveryStatus() },
       );
       return;
     }
@@ -696,9 +667,6 @@ async function handleEnvelope(env, client, seen) {
   if (!env?.lane || !env.frame) return;
   traffic.matrixRxMessages += 1;
   traffic.matrixRxBytes += Buffer.byteLength(JSON.stringify(env));
-  if (typeof env.from === "string" && env.from.trim()) {
-    incomingPeer = env.from.trim();
-  }
   const frame = env.frame;
   if (env.lane === "control") {
     await handleControl(frame, client);
@@ -741,7 +709,7 @@ async function handleToDevice(event, client, seen) {
   const typ = event.getType?.() || event.type;
   if (typ !== EVENT_TYPE) return;
   const content = event.getContent?.() || event.content || {};
-  const env = parseEnvelope(content);
+  const env = peerSession?.open(content, event.getSender?.() || event.sender);
   if (!env) return;
   await handleEnvelope(env, client, seen);
 }
@@ -898,6 +866,7 @@ async function daemon() {
     lastTick = now;
   }, 5000);
   const session = await loadSessionForever();
+  initializePeerSession(session);
   const cleanRoot = side === "clean" ? detectCleanRoot() : null;
   if (side === "clean") log("CLEAN ROOT", cleanRoot || "(none, ping/shell in-process)");
   if (side === "dirty") {
@@ -941,8 +910,10 @@ async function daemon() {
     rtcHandler = rtcMod.handleRtcSignal;
   } catch (e) {
     log("rtc disabled", formatErrorChain(e));
+    throw e;
   }
   log("daemon up");
+  clearInterval(startupHeartbeat);
   process.send?.({
     kind: "supervisor-health",
     phase: "ready",
@@ -963,6 +934,9 @@ async function daemon() {
         protocolVersion: hopProtocolVersion(),
         pid: process.pid,
         uptimeSec: Math.round(process.uptime()),
+        memoryBytes: process.memoryUsage().rss,
+        recovery: recoveryStatus(),
+        kiloVerification: kiloVerification(),
         matrixSyncAgeMs: lastMatrixSyncAt ? Date.now() - lastMatrixSyncAt : null,
         rtc: Boolean(rtcMod?.isRtcUp?.()),
         ...snapshot,
@@ -985,6 +959,8 @@ async function daemon() {
         buildId: process.env.HF_BUILD_ID || "dev",
         pid: process.pid,
         uptimeSec: Math.round(process.uptime()),
+        memoryBytes: process.memoryUsage().rss,
+        kiloVerification: kiloVerification(),
         rtc: Boolean(rtcMod?.isRtcUp?.()),
         dc: snapshot.dc || "none",
         connection: snapshot.connection || "none",
@@ -1015,11 +991,18 @@ async function sendPing() {
   if (!session.user_id) session.user_id = sessionUserId(session);
   if (!session.user_id) throw new Error("session has no user_id");
   userId = session.user_id;
+  initializePeerSession(session);
   const client = await bootClient(session);
   const id = Math.random().toString(16).slice(2, 12);
   await sendFrame(client, "control", { id, type: "health", probe: true });
   log("ping", id);
   client.stopClient();
+}
+
+function initializePeerSession(session) {
+  const replayPath = join(DIRTY_LOCAL, `peer-replay-${sideNow()}.json`);
+  peerSession = loadPeerSession({ side: sideNow(), session, releaseRoot: join(HERE, ".."),
+    secretsRoot: secretsDir(), replay: loadJson(replayPath, []), saveReplay: replay => saveJson(replayPath, replay) });
 }
 
 const cmdName = (process.argv[2] || "").toLowerCase();

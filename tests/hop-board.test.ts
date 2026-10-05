@@ -139,7 +139,7 @@ test("parseDoctorStdout takes the JSON summary and NEXT line", () => {
 test("daemon HTTP serves the board and control", () => {
   const text = readFileSync(join(root, "src", "index.mjs"), "utf8");
   assert.match(text, /kind === "board"/);
-  assert.match(text, /renderHopBoardHtml/);
+  assert.match(text, /renderOperationalBoardHtml/);
   assert.match(text, /kind === "control"/);
   assert.match(text, /kind === "log"/);
   assert.match(text, /parseHopControl/);
