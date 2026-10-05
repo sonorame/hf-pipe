@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildReleaseManifest, promoteRelease, verifyRelease } from "../src/release-runtime.mjs";
 import { ensureReleaseKeyPair, loadPrivateKey } from "../src/release-key.mjs";
 import { HOP_PROTOCOL_VERSION } from "../src/protocol-version.mjs";
+import { buildWindowlessHost } from "./build-windowless-host.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const defaultSourceRoot = join(here, "..");
@@ -34,7 +35,7 @@ function copyRuntimeTree(from, to, kind) {
         // file
       }
       if (kind === "dist") return /\.js$/.test(name);
-      return /\.(?:mjs|js|ps1|cmd|py|vbs)$/.test(name);
+      return /\.(?:mjs|js|ps1|cmd|py|vbs|cs)$/.test(name);
     },
   });
 }
@@ -55,7 +56,7 @@ function treeDigest(root) {
   return hash.digest("hex").slice(0, 16);
 }
 
-function copyStable(sourceRoot, runtimeRoot) {
+function copyStable(sourceRoot, runtimeRoot, releaseDir) {
   const stable = [
     ["src/hf-clean-mcp.mjs", "hf-clean-mcp.mjs"],
     ["src/bootstrap.mjs", "bootstrap.mjs"],
@@ -77,6 +78,8 @@ function copyStable(sourceRoot, runtimeRoot) {
     ["src/cursor-proxy-config.mjs", "cursor-proxy-config.mjs"],
   ];
   for (const [from, to] of stable) copyFileSync(join(sourceRoot, from), join(runtimeRoot, to));
+  const guiHost = join(releaseDir, "src", "task-host.exe");
+  if (existsSync(guiHost)) copyFileSync(guiHost, join(runtimeRoot, "task-host.exe"));
 }
 
 export function buildRelease(options = {}) {
@@ -95,6 +98,7 @@ export function buildRelease(options = {}) {
   const staging = join(runtimeRoot, "releases", `.staging-${process.pid}-${Date.now()}`);
   mkdirSync(staging, { recursive: true });
   copyRuntimeTree(join(sourceRoot, "src"), join(staging, "src"), "src");
+  buildWindowlessHost(sourceRoot, join(staging, "src"));
   copyRuntimeTree(join(sourceRoot, "dist"), join(staging, "dist"), "dist");
   const dependencies = join(sourceRoot, "node_modules");
   if (!existsSync(dependencies)) throw new Error("Install the locked dependencies before building a release");
@@ -120,7 +124,7 @@ export function buildRelease(options = {}) {
   } else {
     renameSync(staging, releaseDir);
   }
-  if (options.activate || !existsSync(join(runtimeRoot, "bootstrap.mjs"))) copyStable(sourceRoot, runtimeRoot);
+  if (options.activate || !existsSync(join(runtimeRoot, "bootstrap.mjs"))) copyStable(sourceRoot, runtimeRoot, releaseDir);
   writeFileSync(join(runtimeRoot, "release-public.pem"), keys.publicKey, { mode: 0o644 });
   if (options.activate) promoteRelease(runtimeRoot, buildId);
   return { buildId, releaseDir, runtimeRoot, publicKeyPath: join(runtimeRoot, "release-public.pem") };

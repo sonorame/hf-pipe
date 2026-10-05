@@ -606,7 +606,8 @@ function startDirtyHttp() {
           pid: process.pid,
           side: sideNow(),
           ...snap,
-        }), buildId: process.env.HF_BUILD_ID || "dev", protocolVersion: hopProtocolVersion(),
+        }), egress: snap.egress, pendingCalls: snap.pendingCalls,
+        buildId: process.env.HF_BUILD_ID || "dev", protocolVersion: hopProtocolVersion(),
         lastError, traffic, memoryBytes: process.memoryUsage().rss, kiloVerification: kiloVerification(), recovery: recoveryStatus() },
       );
       return;

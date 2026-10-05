@@ -64,6 +64,7 @@ writeFileSync(
 );
 
 if (options.nodePath) cpSync(options.nodePath, join(stage, "node.exe"));
+if (existsSync(join(runtimeRoot,"task-host.exe"))) cpSync(join(runtimeRoot,"task-host.exe"),join(stage,"task-host.exe"));
 if (options.privateKey) {
   buildReleaseManifest(stage, {buildId: state.current, protocolVersion: releaseManifest.protocolVersion, privateKey: options.privateKey, entrypoint: "bootstrap.mjs"});
   verifyRelease(stage, {publicKey: readFileSync(join(runtimeRoot,"release-public.pem"),"utf8")});

@@ -39,8 +39,9 @@ test("install-watchdog creates one tracked interactive supervisor task", () => {
   assert.match(ps1, /New-ScheduledTaskTrigger\s+-AtLogOn/);
   assert.match(ps1, /task-host\.ps1/);
   assert.match(ps1, /supervisor-host\.ps1/);
-  assert.match(ps1, /Execute "powershell\.exe"/);
-  assert.match(ps1, /"Hidden"/);
+  assert.match(ps1, /-Execute \$guiHost/);
+  assert.match(ps1, /task-host\.exe/);
+  assert.doesNotMatch(ps1, /-Execute "powershell\.exe"/);
   assert.doesNotMatch(ps1, /conhost\.exe|--headless/);
   assert.doesNotMatch(ps1, /Execute "wscript\.exe"/);
   assert.match(ps1, /Stop-ScheduledTask/);
