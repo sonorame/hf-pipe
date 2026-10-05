@@ -4,10 +4,10 @@
 
 Сигналинг работает через Matrix to-device. Передача данных идет через WebRTC datachannel поверх TURN/TCP. Комнаты чата в качестве транспорта не используются.
 
-[Быстрый старт](#быстрый-старт) · [Запуск без Docker](#запуск-без-docker) · [Запуск в Docker](#запуск-в-docker) · [Куда нажимать и что делать](#куда-нажимать-и-что-делать-дальше) · [Архитектура](docs/architecture.md) · [Параметры окружения](docs/configuration.md)
+[Быстрый старт](#быстрый-старт) · [Запуск без Docker](#запуск-без-docker) · [Запуск в Docker](#запуск-в-docker) · [Куда нажимать и что делать](#куда-нажимать-и-что-делать-дальше) · [Архитектура](docs/architecture.md) · [Cursor CONNECT](docs/cursor-egress.md) · [Параметры окружения](docs/configuration.md)
 
 ![CI](https://github.com/sonorame/hf-pipe/actions/workflows/ci.yml/badge.svg)
-![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
+![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Для чего нужен инструмент
@@ -31,6 +31,7 @@ hf-pipe решает это без VPN и проброса портов:
 - Команды shell с таймаутом и выбором рабочего каталога.
 - Файловые операции: `list`, `tree`, `glob`, `grep`, чтение (`read`) и запись (`write`).
 - Снимок удаленного экрана (`screenshot`).
+- Native Cursor на удаленной стороне через HTTP CONNECT `127.0.0.1:18766` (тот же datachannel, TLS до облака Cursor).
 - Подключение к Cursor через встроенный MCP-сервер (`clean_*`).
 - Запуск вспомогательных скриптов на удаленном хосте (`clean_lab`).
 - Автоматический перезапуск worker без разрыва Matrix control plane.
@@ -47,6 +48,7 @@ Cursor / консоль
         |  WebRTC datachannel через TURN/TCP  (shell, файлы, screenshot)
    WebRTC worker clean
         |  локальный IPC
+        |  HTTP CONNECT 127.0.0.1:18766  (Cursor -> облако Cursor)
    supervisor clean
         |  файловая система, shell, screenshot
    удаленная ОС
@@ -54,7 +56,7 @@ Cursor / консоль
 
 ## Требования
 
-- Node.js 20.3+
+- Node.js 22+
 - Python 3 (для вызова CLI через `src/dirty.py`)
 - Доступный обеим машинам сервер Matrix (Synapse + MAS/OIDC или любой homeserver, выдающий access token)
 - TURN-сервер с поддержкой TCP или TLS (выдается через `GET /_matrix/client/v3/voip/turnServer`)
@@ -200,6 +202,7 @@ docker-compose  Запуск контейнера с монтированием 
 
 ## Документация
 
+- [Native Cursor через HTTP CONNECT](docs/cursor-egress.md)
 - [Архитектура и потоки данных](docs/architecture.md)
 - [Справочник переменных окружения](docs/configuration.md)
 - [Эксплуатация и решение проблем](docs/operations.md)

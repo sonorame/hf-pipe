@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import net from "node:net";
 import { RTCPeerConnection } from "werift";
 import { pinHost, pinnedFetch } from "../dist/network-policy.js";
 import {
@@ -11,6 +12,12 @@ import {
 import { heartbeatShouldRecycle, heartbeatShouldLogPulse } from "../dist/hop-heartbeat.js";
 import { pushHopLog } from "../dist/hop-log.js";
 import { formatErrorChain } from "../dist/error-chain.js";
+import { rpcPort } from "./config.mjs";
+import { egressPort } from "./cursor-proxy-config.mjs";
+import { createConnectProxy } from "./egress-proxy.mjs";
+import { createEgressMux } from "./egress-mux.mjs";
+import { createQosQueue } from "./egress-qos.mjs";
+import { isHopStreamType } from "./egress-stream.mjs";
 
 const MAGIC = Buffer.from("HFP1");
 const TYPE_PING = 1;
@@ -18,6 +25,9 @@ const TYPE_PONG = 2;
 const TYPE_REQ = 10;
 const TYPE_RES = 11;
 const CHUNK = 16 * 1024;
+const qos = createQosQueue();
+let egressMux = null;
+let egressProxy = null;
 
 let log = (...a) => console.error(new Date().toISOString(), ...a);
 let sendSignal = async () => {};
@@ -110,6 +120,7 @@ async function closePc() {
   dc = null;
   remoteDescSet = false;
   dcOpen = false;
+  egressMux?.closeAll("pc closed");
 }
 
 async function flushIce() {
@@ -183,6 +194,7 @@ function attachDc(channel, role) {
     const was = dcOpen;
     dcOpen = false;
     log("rtc closed");
+    egressMux?.closeAll("dc closed");
     if (was) pushHopLog("down", {}, "warn");
   };
   dc.onerror = (err) => log("rtc dc err", err?.error || err);
@@ -258,6 +270,12 @@ function onBinary(buf) {
     }
     return;
   }
+  if (isHopStreamType(m.type)) {
+    const full = takeComplete(m);
+    if (!full) return;
+    egressMux?.onFrame(m.type, m.id, full).catch((e) => log("egress frame", e.message || e));
+    return;
+  }
   if (m.type === TYPE_REQ || m.type === TYPE_RES) {
     const full = takeComplete(m);
     if (!full) return;
@@ -282,7 +300,7 @@ async function handleReq(rpcId, buf) {
   try {
     task = JSON.parse(buf.toString("utf8"));
   } catch {
-    await sendChunked(TYPE_RES, rpcId, Buffer.from(JSON.stringify({ ok: false, error: "bad json" })));
+    await sendQos("rpc", TYPE_RES, rpcId, Buffer.from(JSON.stringify({ ok: false, error: "bad json" })));
     return;
   }
   let one;
@@ -298,7 +316,7 @@ async function handleReq(rpcId, buf) {
     body: { id: task.id, ...one },
     req: task.type,
   };
-  await sendChunked(TYPE_RES, rpcId, Buffer.from(JSON.stringify(res)));
+  await sendQos("rpc", TYPE_RES, rpcId, Buffer.from(JSON.stringify(res)));
 }
 
 export function isRtcUp() {
@@ -349,7 +367,7 @@ export async function rtcCall(task, timeoutMs = 30000) {
       reject(new Error("rtc timeout"));
     }, timeoutMs);
     waiters.set(rpcId, { resolve, reject, timer });
-    sendChunked(TYPE_REQ, rpcId, payload).catch((e) => {
+    sendQos("rpc", TYPE_REQ, rpcId, payload).catch((e) => {
       clearTimeout(timer);
       waiters.delete(rpcId);
       reject(e);
@@ -368,6 +386,49 @@ async function sendChunked(type, id, payload) {
     if (dc?.readyState !== "open") throw new Error("dc closed during send");
     dc.send(pkt);
   }
+}
+
+async function sendQos(kind, type, id, payload) {
+  const job = () => sendChunked(type, id, payload);
+  if (kind === "rpc") qos.pushRpc(job);
+  else qos.pushStream(job);
+  await qos.flush();
+}
+
+function connectTcp(host, port) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host, port });
+    const onErr = (err) => reject(err);
+    socket.once("error", onErr);
+    socket.once("connect", () => {
+      socket.removeListener("error", onErr);
+      resolve(socket);
+    });
+  });
+}
+
+async function startCursorEgress() {
+  if (!egressMux) {
+    egressMux = createEgressMux({
+      send: (type, id, payload) => sendQos("stream", type, id, payload),
+      connectTcp: side === "dirty" ? connectTcp : undefined,
+      log,
+    });
+  }
+  if (side !== "clean") return;
+  const port = egressPort();
+  if (port === rpcPort()) throw new Error("egress port must not be rpc port");
+  if (egressProxy) return;
+  egressProxy = createConnectProxy({
+    bind: "127.0.0.1",
+    port,
+    async onConnect(req) {
+      if (!isRtcUp()) return { ok: false, error: "rtc down" };
+      return egressMux.openLocal(req.host, req.port);
+    },
+  });
+  await egressProxy.listen();
+  log("egress connect", "127.0.0.1", port);
 }
 
 function wirePc() {
@@ -401,6 +462,7 @@ function wirePc() {
     log("rtc state", boundPc.connectionState);
     if (["failed", "closed", "disconnected"].includes(boundPc.connectionState)) {
       dcOpen = false;
+      egressMux?.closeAll(`pc ${boundPc.connectionState}`);
       if (boundPc.connectionState === "failed") pushHopLog("failed", {}, "warn");
     }
   };
@@ -462,6 +524,7 @@ export async function startRtc(opts) {
   sendSignal = opts.sendSignal;
   side = opts.side;
   onRpc = opts.onRpc || null;
+  await startCursorEgress();
   if (side === "dirty") {
     await startOfferer();
     setInterval(() => {

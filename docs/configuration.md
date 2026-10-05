@@ -34,6 +34,8 @@ Access token, идентификатор пользователя и устро�
 |---|---|---|
 | `HF_RPC_BIND` | `127.0.0.1` | Сетевой адрес для привязки HTTP-сервера оператора. В Docker: `0.0.0.0` |
 | `HF_RPC_PORT` | `18765` | Порт локального HTTP-сервера |
+| `HF_EGRESS_PORT` | `18766` | HTTP CONNECT для native Cursor на clean. Не должен совпадать с `HF_RPC_PORT` |
+| `HF_PROTOCOL_VERSION` | `3` в исходниках; живой pack может закрепить `2` | Версия handshake кадров control/RTC. Стороны с разной версией не применяют SDP |
 | `HF_RPC_URL` | `http://127.0.0.1:18765` | Базовый адрес RPC для MCP-сервера и скрипта `dirty.py` |
 | `HF_EVENT_TYPE` | `org.hf.pipe` | Тип сообщений Matrix to-device для сигналинга |
 | `HF_DNS_PIN` | пусто | Список статических записей вида `host=IPv4,host2=IPv4` на случай сбоев системного DNS |

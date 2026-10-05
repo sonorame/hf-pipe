@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   buildReleaseManifest,
   promoteRelease,
+  quarantineStrayReleaseFiles,
   recordReleaseFailure,
   verifyRelease,
 } from "../src/release-runtime.mjs";
@@ -69,4 +70,35 @@ test("activation keeps previous and failure budget rolls back atomically", () =>
   assert.equal(state.previous, null);
   assert.deepEqual(state.bad, ["r2"]);
   assert.equal(state.lastFailure.reason, "exit 1");
+});
+
+test("failure budget does not activate a bad previous release", () => {
+  const root = mkdtempSync(join(tmpdir(), "hf-runtime-bad-prev-"));
+  release(root, "r1");
+  release(root, "r2");
+  promoteRelease(root, "r1");
+  promoteRelease(root, "r2");
+  const path = join(root, "state.json");
+  const state0 = JSON.parse(readFileSync(path, "utf8"));
+  state0.bad = ["r1"];
+  writeFileSync(path, `${JSON.stringify(state0)}\n`);
+  const state = recordReleaseFailure(root, "r2", { threshold: 1, reason: "verify" });
+  assert.equal(state.current, "r2");
+  assert.equal(state.previous, null);
+  assert.deepEqual(state.bad, ["r1"]);
+});
+
+test("stray file is moved out before the release file list is checked", () => {
+  const root = mkdtempSync(join(tmpdir(), "hf-release-stray-"));
+  const dir = release(root);
+  const { privateKey, publicKey } = keys();
+  buildReleaseManifest(dir, { buildId: "r1", protocolVersion: 1, privateKey });
+  writeFileSync(join(dir, "src", "HfCap.dll"), "not-a-real-dll");
+  assert.throws(() => verifyRelease(dir, { publicKey, expectedProtocolVersion: 1 }), /file list mismatch/);
+  const moved = quarantineStrayReleaseFiles(dir);
+  assert.deepEqual(moved, ["src/HfCap.dll"]);
+  assert.equal(existsSync(join(dir, "src", "HfCap.dll")), false);
+  assert.equal(existsSync(join(root, "stray", "r1", "src", "HfCap.dll")), true);
+  const verified = verifyRelease(dir, { publicKey, expectedProtocolVersion: 1 });
+  assert.equal(verified.buildId, "r1");
 });

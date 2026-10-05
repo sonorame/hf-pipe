@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { loadEnvFile, localDir, sessionFile } from "../src/config.mjs";
 import { applyNodeNetworkPolicy, pinnedFetch } from "../dist/network-policy.js";
@@ -41,8 +42,12 @@ if (!peer) throw new Error("clean hf-matrix device not found");
 
 const outgoingDir = join(runtimeRoot, "outgoing");
 mkdirSync(outgoingDir, { recursive: true });
-const archivePath = join(outgoingDir, `${buildId}.zip`);
-const packed = packRelease(releaseDir, archivePath);
+const archiveFlag = process.argv.indexOf("--archive");
+const archivePath = archiveFlag >= 0 ? process.argv[archiveFlag + 1] : join(outgoingDir, `${buildId}.zip`);
+if (!archivePath) throw new Error("--archive requires a path");
+const packed = archiveFlag >= 0
+  ? { size: readFileSync(archivePath).length, sha256: createHash("sha256").update(readFileSync(archivePath)).digest("hex") }
+  : packRelease(releaseDir, archivePath);
 const media = await uploadReleaseMedia({
   homeserver,
   accessToken: token,

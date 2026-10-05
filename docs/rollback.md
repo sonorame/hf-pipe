@@ -11,6 +11,15 @@ git fetch --tags
 git checkout working-baseline-2026-09-15
 ```
 
+Срезы 2026-09-22:
+
+```text
+hf-pipe-egress-tls-mux-2026-09-22
+hf-pipe-clean-cursor-egress-2026-09-22
+```
+
+Первый - Duplex mux без эха TLS в CONNECT. Второй - сам выход Cursor через CONNECT.
+
 Срезы 2026-09-16 (от новых к старым):
 
 ```text

@@ -8,12 +8,14 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildReleaseManifest, promoteRelease, verifyRelease } from "../src/release-runtime.mjs";
 import { ensureReleaseKeyPair, loadPrivateKey } from "../src/release-key.mjs";
+import { HOP_PROTOCOL_VERSION } from "../src/protocol-version.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const defaultSourceRoot = join(here, "..");
@@ -57,6 +59,7 @@ function copyStable(sourceRoot, runtimeRoot) {
   const stable = [
     ["src/hf-clean-mcp.mjs", "hf-clean-mcp.mjs"],
     ["src/bootstrap.mjs", "bootstrap.mjs"],
+    ["src/protocol-version.mjs", "protocol-version.mjs"],
     ["src/release-runtime.mjs", "release-runtime.mjs"],
     ["src/tray-status.mjs", "tray-status.mjs"],
     ["src/process-job.ps1", "process-job.ps1"],
@@ -67,6 +70,8 @@ function copyStable(sourceRoot, runtimeRoot) {
     ["src/install-watchdog.cmd", "install-watchdog.cmd"],
     ["src/start-clean.cmd", "start-clean.cmd"],
     ["src/start-dirty.cmd", "start-dirty.cmd"],
+    ["src/cursor-egress.ps1", "cursor-egress.ps1"],
+    ["src/cursor-egress-apply.mjs", "cursor-egress-apply.mjs"],
   ];
   for (const [from, to] of stable) copyFileSync(join(sourceRoot, from), join(runtimeRoot, to));
 }
@@ -76,8 +81,8 @@ export function buildRelease(options = {}) {
   const runtimeRoot = options.runtimeRoot;
   if (!runtimeRoot) throw new Error("runtimeRoot is required");
   const keyDir = options.keyDir || join(homedir(), ".hf-pipe", "keys");
-  const protocolVersion = Number(options.protocolVersion || 2);
-  const keys = ensureReleaseKeyPair(keyDir);
+  const protocolVersion = Number(options.protocolVersion || HOP_PROTOCOL_VERSION);
+  const keys = options.signingKeyPair || ensureReleaseKeyPair(keyDir);
   mkdirSync(join(runtimeRoot, "releases"), { recursive: true });
 
   const staging = join(runtimeRoot, "releases", `.staging-${process.pid}-${Date.now()}`);
@@ -89,7 +94,7 @@ export function buildRelease(options = {}) {
   }
 
   const buildId = options.buildId || treeDigest(staging);
-  const privateKey = loadPrivateKey(keys.privatePath);
+  const privateKey = keys.privateKey || loadPrivateKey(keys.privatePath);
   buildReleaseManifest(staging, { buildId, protocolVersion, privateKey });
   verifyRelease(staging, { publicKey: keys.publicKey, expectedProtocolVersion: protocolVersion });
 
@@ -101,7 +106,7 @@ export function buildRelease(options = {}) {
     renameSync(staging, releaseDir);
   }
   copyStable(sourceRoot, runtimeRoot);
-  copyFileSync(keys.publicPath, join(runtimeRoot, "release-public.pem"));
+  writeFileSync(join(runtimeRoot, "release-public.pem"), keys.publicKey, { mode: 0o644 });
   if (options.activate) promoteRelease(runtimeRoot, buildId);
   return { buildId, releaseDir, runtimeRoot, publicKeyPath: join(runtimeRoot, "release-public.pem") };
 }

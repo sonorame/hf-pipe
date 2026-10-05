@@ -34,7 +34,7 @@ import {
 } from "../dist/hop-board.js";
 import { pushHopLog, readHopLogAfter } from "../dist/hop-log.js";
 import { spawnRtcWorker } from "./rtc-worker-client.mjs";
-import { decorateControlFrame, validateControlFrame } from "./protocol-version.mjs";
+import { decorateControlFrame, hopProtocolVersion, validateControlFrame } from "./protocol-version.mjs";
 import { downloadReleaseMedia, stageReleaseArchive } from "./release-transfer.mjs";
 import { promoteRelease } from "./release-runtime.mjs";
 import {
@@ -50,7 +50,7 @@ process.send?.({
   kind: "supervisor-health",
   phase: "booted",
   buildId: process.env.HF_BUILD_ID || "dev",
-  protocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+  protocolVersion: hopProtocolVersion(),
   pid: process.pid,
 });
 
@@ -503,7 +503,7 @@ async function handleControl(frame, client) {
       archivePath,
       runtimeRoot,
       publicKey,
-      expectedProtocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+      expectedProtocolVersion: hopProtocolVersion(),
       expectedSha256: frame.sha256,
     });
     await sendFrame(client, "control", {
@@ -947,7 +947,7 @@ async function daemon() {
     kind: "supervisor-health",
     phase: "ready",
     buildId: process.env.HF_BUILD_ID || "dev",
-    protocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+    protocolVersion: hopProtocolVersion(),
     pid: process.pid,
   });
   const reportSupervisor = () => {
@@ -960,7 +960,7 @@ async function daemon() {
         host: process.env.COMPUTERNAME || "",
         side,
         buildId: process.env.HF_BUILD_ID || "dev",
-        protocolVersion: Number(process.env.HF_PROTOCOL_VERSION || 2),
+        protocolVersion: hopProtocolVersion(),
         pid: process.pid,
         uptimeSec: Math.round(process.uptime()),
         matrixSyncAgeMs: lastMatrixSyncAt ? Date.now() - lastMatrixSyncAt : null,

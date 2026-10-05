@@ -96,7 +96,20 @@ npm run doctor
 
 На грязной машине тот же путь одним кликом: `scripts\hop-up.cmd` (поднимает демон, если он не жив, ждет RTC, гоняет доктор). HTTP-only замер стека: `npm run diagnose`.
 
-## 7. Интеграция с Cursor (MCP)
+## 7. Native Cursor на удаленной стороне
+
+Чтобы Chat/Agent Cursor на clean шел в облако через трубу, а не своим исходящим 443:
+
+1. Закройте Cursor.
+2. На clean: `node src/cursor-egress-apply.mjs` (нужны права администратора на firewall).
+3. Запускайте Cursor из ярлыка `Cursor (hf-pipe).lnk` (`--proxy-server=http://127.0.0.1:18766`).
+4. Проверьте `127.0.0.1:18766` Listen и CONNECT к `api2.cursor.sh:443` -> `200 Connection Established`, затем TLS.
+
+Снять прокси: `node src/cursor-egress-apply.mjs --uninstall`.
+
+Контракт потока, allowlist, версии протокола и откат: [cursor-egress.md](cursor-egress.md).
+
+## 8. Интеграция с Cursor (MCP)
 
 1. Откройте конфигурационный файл `~/.cursor/mcp.json`.
 2. Добавьте блок сервера `clean-pc` из файла `examples/mcp.json`:
@@ -106,7 +119,7 @@ npm run doctor
 3. Перезапустите Cursor.
 4. В чате Cursor вызовите инструмент `clean_status` для проверки доступности туннеля. При успешном статусе станут доступны инструменты `clean_shell`, `clean_list`, `clean_read`, `clean_write`, `clean_screenshot` и другие.
 
-## 8. Особенности снятия screenshot на Windows
+## 9. Особенности снятия screenshot на Windows
 
 Снятие снимка экрана на стороне удаленного хоста (`clean`) использует PowerShell. Процесс хопа должен работать в интерактивной пользовательской сессии (под той же учетной записью, под которой выполнен вход на рабочий стол). При автозапуске через планировщик Windows (`src/install-watchdog.cmd`) задача настраивается именно от имени интерактивного пользователя, а не учетной записи SYSTEM.
 

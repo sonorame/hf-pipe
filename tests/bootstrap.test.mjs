@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { buildReleaseManifest, promoteRelease } from "../src/release-runtime.mjs";
 
 const bootstrap = new URL("../src/bootstrap.mjs", import.meta.url);
@@ -30,7 +31,7 @@ test("bootstrap marks a crashing current release bad and rolls back before retry
   promoteRelease(runtime, "good");
   promoteRelease(runtime, "bad");
 
-  const result = spawnSync(process.execPath, [bootstrap.pathname.slice(1), "dirty"], {
+  const result = spawnSync(process.execPath, [fileURLToPath(bootstrap), "dirty"], {
     env: {
       ...process.env,
       HF_RUNTIME_ROOT: runtime,

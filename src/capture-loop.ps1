@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms,System.Drawing
-$here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$dll = Join-Path $here "HfCap.dll"
+$dllDir = $env:TEMP
+if (-not $dllDir) { $dllDir = $env:TMP }
+if (-not $dllDir) { throw "TEMP is not set" }
+$dll = Join-Path $dllDir "hf-pipe-HfCap.dll"
 $code = @"
 using System;
 using System.Runtime.InteropServices;
