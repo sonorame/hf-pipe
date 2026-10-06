@@ -31,6 +31,7 @@ mkdirSync(join(stage, "releases"), { recursive: true });
 
 for (const name of [
   "bootstrap.mjs",
+  "supervisor-recovery.mjs",
   "operational-board.mjs",
   "start-hop.vbs",
   "protocol-version.mjs",

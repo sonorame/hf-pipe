@@ -2,6 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync, exists
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import http from "http";
+import { randomUUID } from "node:crypto";
+import { createPeerSessionRecovery } from "./peer-session-recovery.mjs";
 import { spawn } from "child_process";
 import {
   loadEnvFile,
@@ -400,6 +402,8 @@ function writeDirtyResult(frame) {
 
 let rtcHandler = null;
 let rtcMod = null;
+const processSessionId = randomUUID();
+const observePeerSession = createPeerSessionRecovery();
 let doctorRunning = false;
 const rtcSeenIds = new Set();
 const CONTROL_TYPES = new Set([
@@ -450,6 +454,10 @@ async function handleControl(frame, client) {
       ...frame,
       receivedAt: new Date().toISOString(),
     });
+    if (observePeerSession(frame, Boolean(rtcMod?.recycleRtcNow))) {
+      log("peer session ready", frame.sessionId || frame.pid, "request fresh RTC offer");
+      rtcMod.recycleRtcNow();
+    }
     return;
   }
   if (sideNow() === "dirty" && ["release-staged", "release-activated"].includes(frame.type)) {
@@ -860,8 +868,8 @@ async function daemon() {
   setInterval(() => {
     const now = Date.now();
     if (shouldRecycleAfterClockJump(lastTick, now)) {
-      log("clock jump", now - lastTick, "exit for watchdog");
-      process.exit(7);
+      log("clock jump", now - lastTick, "recycle RTC after scheduler resume");
+      rtcMod?.recycleRtcNow?.();
     }
     lastTick = now;
   }, 5000);
@@ -954,6 +962,7 @@ async function daemon() {
       sendFrame(client, "control", {
         id: `health-${Date.now()}`,
         type: "health",
+        sessionId: processSessionId,
         host: process.env.COMPUTERNAME || "",
         side,
         buildId: process.env.HF_BUILD_ID || "dev",

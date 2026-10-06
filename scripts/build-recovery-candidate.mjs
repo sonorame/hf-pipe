@@ -1,0 +1,25 @@
+import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildRelease } from "./build-release.mjs";
+import { buildBootstrapBundle } from "./build-bootstrap-bundle.mjs";
+import { loadPrivateKey, validateReleaseKeyPair } from "../src/release-key.mjs";
+import { verifyRelease } from "../src/release-runtime.mjs";
+
+const [baseRoot, outputRoot] = process.argv.slice(2);
+if (!baseRoot || !outputRoot) throw new Error("usage: node scripts/build-recovery-candidate.mjs <live-generation> <output-root>");
+const sourceRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const state = JSON.parse(readFileSync(join(baseRoot, "state.json"), "utf8"));
+const publicKey = readFileSync(join(baseRoot, "release-public.pem"), "utf8");
+const baseRelease = join(baseRoot, "releases", state.current);
+verifyRelease(baseRelease, { publicKey, expectedProtocolVersion: 3 });
+const privateKey = loadPrivateKey(join(homedir(), ".hf-pipe", "keys", "release-private.dpapi"));
+validateReleaseKeyPair(privateKey, publicKey);
+const peerTrust = JSON.parse(readFileSync(join(baseRelease, "peer-trust.json"), "utf8"));
+const result = buildRelease({ sourceRoot, runtimeRoot: join(outputRoot, "runtime"), signingKeyPair: { privateKey, publicKey }, peerTrust, protocolVersion: 3, activate: true });
+const bundle = buildBootstrapBundle({ runtimeRoot: result.runtimeRoot, privateKey, nodePath: join(baseRoot, "node.exe") });
+mkdirSync(outputRoot, { recursive: true });
+const receipt = { ...bundle, baseBuildId: state.current, protocolVersion: 3 };
+writeFileSync(join(outputRoot, "candidate.json"), JSON.stringify(receipt, null, 2));
+console.log(JSON.stringify(receipt));

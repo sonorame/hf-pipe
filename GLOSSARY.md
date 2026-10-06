@@ -9,7 +9,7 @@ A local Codex plugin that packages the `hf-pipe` operating workflow and its `cle
 _Avoid_: Cursor configuration, operator package
 
 **Live runtime**:
-The existing dirty-side Matrix/WebRTC installation at `~\.cursor\matrix-mcp-e2ee`, including its signed releases and `HFPipe-dirty` supervision. The operator plugin reuses it rather than copying it.
+The signed runtime generation selected by the `HFPipe-<side>` scheduled task, normally under `~\.hf-pipe\runtime-generations\<build-id>`. Discover its root from the task action and running process. The legacy `~\.cursor\matrix-mcp-e2ee` installation may still supply the operator plugin's MCP bridge; its `state.json` does not establish which generation is running. The operator plugin reuses the live runtime rather than copying it.
 _Avoid_: plugin runtime, copied runtime
 
 **Clean host**:
