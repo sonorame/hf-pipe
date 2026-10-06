@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { quarantineStrayReleaseFiles, recordReleaseFailure, verifyRelease } from "./release-runtime.mjs";
 import { hopProtocolVersion } from "./protocol-version.mjs";
 import { renderOperationalBoardHtml } from "./operational-board.mjs";
+import { createSupervisorRecovery } from "./supervisor-recovery.mjs";
 
 function runtimeRoot() {
   return process.env.HF_RUNTIME_ROOT || join(homedir(), ".hf-pipe", "runtime");
@@ -91,12 +92,15 @@ export async function runBootstrap(side, options = {}) {
         if (!releaseId) throw new Error("no current release");
         releaseDir = join(root, "releases", releaseId);
         status.bootstrap.current = releaseId;
+        const verificationStartedAt = Date.now();
+        log.write(`${new Date().toISOString()} verify-start ${releaseId}\n`);
         const stray = quarantineStrayReleaseFiles(releaseDir);
         if (stray.length) log.write(`${new Date().toISOString()} stray moved ${stray.join(",")}\n`);
         const manifest = verifyRelease(releaseDir, {
           publicKey,
           expectedProtocolVersion: protocolVersion,
         });
+        log.write(`${new Date().toISOString()} verify-complete ${releaseId} durationMs=${Date.now() - verificationStartedAt}\n`);
         log.write(`${new Date().toISOString()} start ${releaseId} ${manifest.buildId}\n`);
       } catch (error) {
         if (releaseId) {
@@ -118,10 +122,11 @@ export async function runBootstrap(side, options = {}) {
       let booted = false;
       let stderr = "";
       let watchdogReason = null;
-      let lastReportAt = Date.now();
-      let rtcDownSince = 0;
       status.report = null;
       const heartbeatMs = Number(process.env.HF_SUPERVISOR_HEARTBEAT_MS || 15_000);
+      const recovery = createSupervisorRecovery({
+        heartbeatMs, startupMs: Number(process.env.HF_STARTUP_BOOT_MS || 30_000),
+      });
       const stopForRecovery = (reason) => {
         if (watchdogReason) return;
         watchdogReason = reason;
@@ -147,13 +152,12 @@ export async function runBootstrap(side, options = {}) {
       });
       child.on("message", (message) => {
         if (message?.kind !== "supervisor-health") return;
-        lastReportAt = Date.now();
+        recovery.report(Date.now(), message.phase);
         if (message?.kind === "supervisor-health" && message.phase === "booted") {
           log.write(`${new Date().toISOString()} booted ${releaseId}\n`);
         }
         if (message.phase === "ready") {
           booted = true;
-          clearTimeout(startupTimer);
           log.write(`${new Date().toISOString()} ready ${releaseId}\n`);
         }
         if (message?.kind === "supervisor-health" && message.phase === "running") {
@@ -172,25 +176,12 @@ export async function runBootstrap(side, options = {}) {
           }
         }
       });
-      const startupTimer = setTimeout(() => {
-        if (!booted) stopForRecovery("startup readiness deadline");
-      }, Number(process.env.HF_STARTUP_BOOT_MS || 30_000));
       const watchdog = setInterval(() => {
-        const now = Date.now();
-        if (now - lastReportAt >= heartbeatMs) {
-          stopForRecovery("supervisor heartbeat stalled");
-          return;
-        }
-        const local = status.report?.local;
-        if (local?.rtc === true) rtcDownSince = 0;
-        else if (local && !rtcDownSince) rtcDownSince = now;
-        if (local && rtcDownSince && now - rtcDownSince >= 10_000 &&
-            Number(local.matrixSyncAgeMs) >= 20_000) {
-          stopForRecovery("Matrix sync stale while RTC unavailable; reload process trust");
-        }
+        const decision = recovery.check(Date.now(), status.report?.local);
+        if (decision.resumed) log.write(`${new Date().toISOString()} supervisor-resumed gapMs=${decision.gapMs} heartbeatWindowMs=${heartbeatMs}\n`);
+        if (decision.reason) stopForRecovery(decision.reason);
       }, Number(process.env.HF_SUPERVISOR_CHECK_MS || 1000));
       child.on("exit", (code, signal) => {
-        clearTimeout(startupTimer);
         clearInterval(watchdog);
         status.report = null;
         if (!recoveryStartedAt) recoveryStartedAt = Date.now();
