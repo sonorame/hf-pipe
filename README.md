@@ -204,6 +204,7 @@ docker-compose  Запуск контейнера с монтированием 
 
 ## Документация
 
+- [Отдельный Windows VPN через Matrix и VPS](docs/matrix-vpn.md)
 - [Native Cursor через HTTP CONNECT](docs/cursor-egress.md)
 - [Архитектура и потоки данных](docs/architecture.md)
 - [Справочник переменных окружения](docs/configuration.md)

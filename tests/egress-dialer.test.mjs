@@ -26,3 +26,13 @@ test("Codex lookalike domains and IP destinations remain denied", () => {
     assert.equal(hostAllowed(host), false, host);
   }
 });
+
+test("the opt-in VPN profile accepts public TCP destinations without changing the default profile", () => {
+  for (const host of ["telegram.org", "example.org", "149.154.167.50"]) {
+    assert.equal(hostAllowed(host, { publicInternet: true }), true, host);
+    assert.equal(hostAllowed(host), false, host);
+  }
+  for (const host of ["", "127.0.0.1", "10.0.0.1", "169.254.169.254", "::1"]) {
+    assert.equal(hostAllowed(host, { publicInternet: true }), false, host);
+  }
+});

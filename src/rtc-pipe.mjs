@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import net from "node:net";
+import { connectTcp } from "./egress-dialer.mjs";
 import { RTCPeerConnection } from "werift";
 import { pinHost, pinnedFetch } from "../dist/network-policy.js";
 import {
@@ -402,23 +402,13 @@ async function sendQos(kind, type, id, payload) {
   await qos.flush();
 }
 
-function connectTcp(host, port) {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect({ host, port });
-    const onErr = (err) => reject(err);
-    socket.once("error", onErr);
-    socket.once("connect", () => {
-      socket.removeListener("error", onErr);
-      resolve(socket);
-    });
-  });
-}
-
 async function startCursorEgress() {
   if (!egressMux) {
+    const publicInternet = process.env.HF_EGRESS_PROFILE === "vpn";
     egressMux = createEgressMux({
+      publicInternet,
       send: (type, id, payload) => sendQos("stream", type, id, payload),
-      connectTcp: side === "dirty" ? connectTcp : undefined,
+      connectTcp: side === "dirty" ? (host, port) => connectTcp(host, port, { publicInternet }) : undefined,
       log,
     });
   }
