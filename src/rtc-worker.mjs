@@ -31,6 +31,10 @@ async function parentRpc(frame) {
 }
 
 process.on("message", (message) => {
+  if (message?.kind === "access-token") {
+    process.env.MATRIX_ACCESS_TOKEN = message.token;
+    return;
+  }
   if (message?.kind === "signal") {
     handleRtcSignal(message.frame);
     return;

@@ -56,6 +56,9 @@ export function createRtcWorkerClient(options) {
   });
 
   return {
+    setAccessToken(token) {
+      child.send({ kind: "access-token", token });
+    },
     isRtcUp: () => ready,
     rtcSnapshot: () => ({ ...snapshot, pendingCalls: pending.size }),
     handleRtcSignal(frame) {
@@ -118,6 +121,7 @@ export function spawnRtcWorker(options) {
 
   return {
     isRtcUp: () => client?.isRtcUp() === true,
+    setAccessToken: (token) => client?.setAccessToken(token),
     rtcSnapshot: () => client?.rtcSnapshot() || {},
     handleRtcSignal: (frame) => client?.handleRtcSignal(frame),
     rtcCall: (frame, timeout) => {

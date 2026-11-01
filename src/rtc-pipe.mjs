@@ -159,12 +159,17 @@ function emit(frame) {
 }
 
 async function signalCreatedDescription(desc, sdpType) {
-  const sld = pc.setLocalDescription(desc);
+  const boundPc = pc;
+  const sld = boundPc.setLocalDescription(desc);
   localDescOp = sld.catch((e) => {
     log("rtc sld", formatErrorChain(e));
     throw e;
   });
-  const sdp = desc?.sdp || pc.localDescription?.sdp;
+  // Send one complete description: early trickled candidates can finish ICE
+  // before werift starts DTLS, leaving a connected ICE transport with no DC.
+  await localDescOp;
+  if (pc !== boundPc) throw new Error("RTC peer replaced while gathering SDP");
+  const sdp = boundPc.localDescription?.sdp || desc?.sdp;
   if (!localSdpReadyToSignal({ alreadySignaled: false, sdp })) {
     throw new Error("local sdp empty");
   }
@@ -435,8 +440,6 @@ async function startCursorEgress() {
 
 function wirePc() {
   const boundPc = pc;
-  const boundGen = sessionGen;
-  const boundEpoch = sessionEpoch;
   pc.onicecandidate = (ev) => {
     if (pc !== boundPc) return;
     const cand = ev?.candidate;
@@ -445,15 +448,7 @@ function wirePc() {
     if (!line) return;
     const typ = (line.match(/ typ (\S+)/) || [])[1] || "?";
     log("rtc local ice", typ);
-    emit({
-      id: uid(),
-      type: "ice",
-      candidate: line,
-      mid: cand.sdpMid || "0",
-      sdpMLineIndex: cand.sdpMLineIndex ?? 0,
-      gen: boundGen,
-      epoch: boundEpoch,
-    }).catch((e) => log("rtc sig ice", formatErrorChain(e)));
+    // Candidates travel in the complete SDP; accept legacy trickle on receive.
   };
   pc.onicegatheringstatechange = () => {
     if (pc !== boundPc) return;
@@ -504,7 +499,7 @@ async function startOfferer() {
     const offer = await pc.createOffer();
     await signalCreatedDescription(offer, "offer");
     await localDescOp;
-    log("rtc offerer", "gen", sessionGen, "epoch", sessionEpoch, "sdp", Buffer.byteLength(offer.sdp || pc.localDescription.sdp));
+    log("rtc offerer", "gen", sessionGen, "epoch", sessionEpoch, "sdp", Buffer.byteLength(pc.localDescription.sdp || offer.sdp));
     pushHopLog("offer", { gen: sessionGen });
   } finally {
     offerCreateInFlight = false;

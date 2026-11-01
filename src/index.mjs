@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync, existsSync, unlinkSync } from "fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync, readdirSync, renameSync, existsSync, unlinkSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import http from "http";
@@ -37,14 +37,14 @@ import { decorateControlFrame, hopProtocolVersion, validateControlFrame } from "
 import { downloadReleaseMedia, stageReleaseArchive } from "./release-transfer.mjs";
 import { promoteRelease } from "./release-runtime.mjs";
 import {
-  loadSessionRefreshToken,
   protectSessionRefreshToken,
   refreshSession,
+  sessionNeedsRefresh,
 } from "./session-auth.mjs";
-import { protectDpapiText } from "./release-key.mjs";
 import { homedir } from "node:os";
 import { renderOperationalBoardHtml } from "./operational-board.mjs";
 import { loadPeerSession } from "./peer-session.mjs";
+import { ENROLLMENT_EVENT_TYPE, acceptEnrollmentRequest, createEnrollmentAck } from "./peer-enrollment.mjs";
 
 loadEnvFile();
 applyNodeNetworkPolicy();
@@ -75,7 +75,7 @@ let recoveryStartedAt = Date.now();
 function recoveryStatus() {
   if (rtcMod?.isRtcUp?.()) recoveryStartedAt = 0;
   else if (!recoveryStartedAt) recoveryStartedAt = Date.now();
-  return { elapsedMs: recoveryStartedAt ? Date.now() - recoveryStartedAt : 0, budgetMs: 60_000 };
+  return { elapsedMs: recoveryStartedAt ? Date.now() - recoveryStartedAt : 0, budgetMs: 120_000 };
 }
 const traffic = {
   matrixTxMessages: 0,
@@ -218,7 +218,8 @@ function loadJson(path, fallback) {
 function saveJson(path, obj) {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = path + ".tmp";
-  writeFileSync(tmp, JSON.stringify(obj, null, 2));
+  writeFileSync(tmp, JSON.stringify(obj, null, 2), { mode: 0o600 });
+  if (process.platform !== "win32") chmodSync(tmp, 0o600);
   renameSync(tmp, path);
 }
 
@@ -715,6 +716,26 @@ async function handleEnvelope(env, client, seen) {
 
 async function handleToDevice(event, client, seen) {
   const typ = event.getType?.() || event.type;
+  if (typ === ENROLLMENT_EVENT_TYPE && sideNow() === "dirty") {
+    const capabilityPath = process.env.HF_PEER_ENROLLMENT_FILE;
+    const trustPath = process.env.HF_PEER_TRUST_FILE;
+    if (!capabilityPath || !trustPath) return;
+    const capability = loadJson(capabilityPath, null);
+    const accepted = acceptEnrollmentRequest(event.getContent?.() || event.content, {
+      sender: event.getSender?.() || event.sender, capability, dirty: peerSession.own,
+    });
+    const changed = JSON.stringify(peerSession.peer) !== JSON.stringify(accepted.trust.clean);
+    saveJson(capabilityPath, { ...capability, enrolled: accepted.trust.clean });
+    saveJson(trustPath, accepted.trust);
+    const response = await pinnedFetch(`${hsBase()}/_matrix/client/v3/sendToDevice/${ENROLLMENT_EVENT_TYPE}/${randomUUID()}`, {
+      method: "PUT", headers: { Authorization: `Bearer ${accessToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: { [accepted.trust.clean.userId]: { [accepted.trust.clean.deviceId]: createEnrollmentAck(accepted, capability.token) } } }),
+    });
+    if (!response.ok) throw new Error(`Enrollment reply ${response.status}`);
+    log("clean enrollment accepted", accepted.trust.clean.deviceId);
+    if (changed) setTimeout(() => process.exit(7), 1000);
+    return;
+  }
   if (typ !== EVENT_TYPE) return;
   const content = event.getContent?.() || event.content || {};
   const env = peerSession?.open(content, event.getSender?.() || event.sender);
@@ -778,11 +799,21 @@ async function loadSessionForever() {
   }
 }
 
+async function renewMatrixSession(session, client) {
+  const refreshed = await refreshSession(session, { secretsDir: secretsDir(), fetchFn: pinnedFetch });
+  saveJson(sessionPath, refreshed);
+  Object.assign(session, refreshed);
+  process.env.MATRIX_ACCESS_TOKEN = refreshed.access_token;
+  client?.setAccessToken(refreshed.access_token);
+  rtcMod?.setAccessToken(refreshed.access_token);
+  log("Matrix token refreshed");
+}
+
 async function bootForever(session) {
   let lastRefreshAt = 0;
   for (;;) {
     try {
-      if (session.expires_at && Number(session.expires_at) <= Date.now() + 60_000) {
+      if (sessionNeedsRefresh(session)) {
         throw new Error("access token expires");
       }
       return await bootClient(session);
@@ -792,17 +823,7 @@ async function bootForever(session) {
       if (authFailure && Date.now() - lastRefreshAt > 60_000) {
         lastRefreshAt = Date.now();
         try {
-          const refreshed = await refreshSession(session, {
-            loadRefreshToken: (value) => loadSessionRefreshToken(value, secretsDir()),
-            fetchFn: pinnedFetch,
-            protectRefreshToken: (token) => {
-              protectDpapiText(token, join(secretsDir(), "matrix-refresh.dpapi"));
-              return "matrix-refresh.dpapi";
-            },
-          });
-          Object.assign(session, refreshed);
-          saveJson(sessionPath, session);
-          log("Matrix token refreshed");
+          await renewMatrixSession(session);
           continue;
         } catch (refreshError) {
           log("Matrix login required", formatErrorChain(refreshError));
@@ -815,7 +836,7 @@ async function bootForever(session) {
   }
 }
 
-function watchSync(client) {
+function watchSync(client, session) {
   let lastOk = Date.now();
   lastMatrixSyncAt = lastOk;
   let rtcDownSince = 0;
@@ -827,7 +848,19 @@ function watchSync(client) {
     if (state !== "SYNCING") log("sync", state);
   });
   const deadMs = Number(process.env.HF_SYNC_DEAD_MS || 120000);
-  setInterval(() => {
+  let refreshing = false;
+  setInterval(async () => {
+    if (refreshing) return;
+    if (sessionNeedsRefresh(session)) {
+      refreshing = true;
+      try {
+        await renewMatrixSession(session, client);
+      } catch (error) {
+        log("Matrix refresh retry", formatErrorChain(error));
+      } finally {
+        refreshing = false;
+      }
+    }
     const rtcUp = Boolean(rtcMod?.isRtcUp?.());
     if (rtcUp) rtcDownSince = 0;
     else if (!rtcDownSince) rtcDownSince = Date.now();
@@ -885,7 +918,7 @@ async function daemon() {
   }
   log("session", session.user_id, session.device_id, "to-device", EVENT_TYPE);
   const client = await bootForever(session);
-  watchSync(client);
+  watchSync(client, session);
   const seen = loadSeen();
   log("crypto device", client.getDeviceId());
   try {

@@ -52,3 +52,14 @@ test("a real Matrix outage with fresh process heartbeats still recycles automati
   s.report(11_000, "running");
   assert.match(s.check(11_000, { rtc: false, matrixSyncAgeMs: 25_000 }).reason, /Matrix sync stale/);
 });
+
+test("a stalled datachannel gets the full RTC recovery window before it recycles", () => {
+  const s = createSupervisorRecovery({ now: 0 });
+  s.report(0, "ready");
+  for (let t = 1000; t < 121_000; t += 1000) {
+    s.report(t, "running");
+    assert.equal(s.check(t, { rtc: false, matrixSyncAgeMs: 0 }).reason, undefined);
+  }
+  s.report(121_000, "running");
+  assert.equal(s.check(121_000, { rtc: false, matrixSyncAgeMs: 0 }).reason, "RTC recovery deadline");
+});

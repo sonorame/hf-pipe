@@ -64,7 +64,7 @@ export function createPeerSession({ side, trust, privateKey, now = Date.now, rep
 }
 
 export function loadPeerSession({ side, session, releaseRoot, secretsRoot, replay, saveReplay }) {
-  const trust = JSON.parse(readFileSync(join(releaseRoot, "peer-trust.json"), "utf8"));
+  const trust = JSON.parse(readFileSync(process.env.HF_PEER_TRUST_FILE || join(releaseRoot, "peer-trust.json"), "utf8"));
   const own = trust[side];
   if (own?.userId !== session.user_id || own?.deviceId !== session.device_id) {
     throw new Error("Matrix session differs from signed peer enrollment; enroll the device before activation");

@@ -3,8 +3,14 @@ import { protectDpapiText, unprotectDpapiText } from "./release-key.mjs";
 
 const REFRESH_FILE = "matrix-refresh.dpapi";
 
+export function sessionNeedsRefresh(session, now = Date.now()) {
+  return Boolean(session?.expires_at) && Number(session.expires_at) <= now + 60_000;
+}
+
 export function protectSessionRefreshToken(session, secretsDir) {
   if (!session?.refresh_token) return { ...session };
+  // Android/Unix sessions live in a private directory; DPAPI remains Windows-only.
+  if (process.platform !== "win32") return { ...session };
   protectDpapiText(session.refresh_token, join(secretsDir, REFRESH_FILE));
   const { refresh_token: _removed, ...safe } = session;
   return { ...safe, refresh_token_dpapi: REFRESH_FILE };
@@ -17,7 +23,7 @@ export function loadSessionRefreshToken(session, secretsDir) {
 }
 
 export async function refreshSession(session, options) {
-  const refreshToken = options.loadRefreshToken(session);
+  const refreshToken = loadSessionRefreshToken(session, options.secretsDir);
   if (!refreshToken) throw new Error("Matrix refresh token unavailable");
   if (!session.token_endpoint || !session.client_id) throw new Error("Matrix OIDC refresh configuration missing");
   const body = new URLSearchParams({
@@ -35,12 +41,11 @@ export async function refreshSession(session, options) {
   const tokens = JSON.parse(text);
   if (!tokens.access_token) throw new Error("Matrix token refresh returned no access_token");
   const nextRefresh = tokens.refresh_token || refreshToken;
-  const refreshPath = options.protectRefreshToken(nextRefresh);
   const { refresh_token: _removed, ...safe } = session;
-  return {
+  return protectSessionRefreshToken({
     ...safe,
     access_token: tokens.access_token,
-    refresh_token_dpapi: refreshPath || session.refresh_token_dpapi || REFRESH_FILE,
+    refresh_token: nextRefresh,
     expires_at: tokens.expires_in ? Date.now() + Number(tokens.expires_in) * 1000 : session.expires_at,
-  };
+  }, options.secretsDir);
 }

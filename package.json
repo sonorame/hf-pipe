@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "postinstall": "node scripts/patch-werift.mjs",
     "prepare": "tsc",
     "test": "tsc && node scripts/test.mjs",
     "start": "node scripts/run.mjs",
@@ -26,7 +27,7 @@
     "@modelcontextprotocol/sdk": "^1.16.0",
     "matrix-js-sdk": "^38.2.0",
     "undici": "^7.29.1",
-    "werift": "^0.24.4",
+    "werift": "0.24.4",
     "zod": "^3.24.0"
   },
   "devDependencies": {

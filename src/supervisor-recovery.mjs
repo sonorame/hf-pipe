@@ -32,6 +32,10 @@ export function createSupervisorRecovery({ now = Date.now(), heartbeatMs = 15_00
           local.matrixSyncAgeMs != null && Number(local.matrixSyncAgeMs) >= 20_000) {
         return { reason: "Matrix sync stale while RTC unavailable; reload process trust" };
       }
+      // Let the RTC worker finish its own 120-second recovery window.
+      if (rtcDownSince !== null && time - rtcDownSince >= 120_000) {
+        return { reason: "RTC recovery deadline" };
+      }
       return {};
     },
   };

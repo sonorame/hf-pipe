@@ -1,5 +1,5 @@
 import { createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -63,8 +63,19 @@ export function unprotectDpapiText(path) {
   return Buffer.from(base64, "base64").toString("utf8");
 }
 
-export const protectPrivateKey = protectDpapiText;
-export const loadPrivateKey = unprotectDpapiText;
+export function protectPrivateKey(text, path) {
+  if (process.platform === "win32") return protectDpapiText(text, path);
+  // Unix stores owner-only PEM; Windows retains DPAPI and its existing paths.
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(path), 0o700);
+  writeFileSync(path, String(text), { mode: 0o600, flag: "wx" });
+}
+
+export function loadPrivateKey(path) {
+  if (process.platform === "win32") return unprotectDpapiText(path);
+  if (statSync(path).mode & 0o077) throw new Error("Private key file must be owner-only");
+  return readFileSync(path, "utf8");
+}
 
 export function validateReleaseKeyPair(privateKey, publicKey) {
   const secret = createPrivateKey(privateKey);

@@ -1,5 +1,5 @@
 import { createServer } from "http";
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { chmodSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import { platform } from "os";
 import { spawn } from "child_process";
@@ -26,8 +26,10 @@ const PORT = Number(process.env.HF_LOGIN_PORT || 18767);
 const DEVICE_NAME = deviceDisplayName(process.env.HF_SIDE || "clean");
 
 function saveJson(path, obj) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(obj, null, 2), "utf8");
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32") chmodSync(dirname(path), 0o700);
+  writeFileSync(path, JSON.stringify(obj, null, 2), { encoding: "utf8", mode: 0o600 });
+  if (process.platform !== "win32") chmodSync(path, 0o600);
 }
 
 function loadJson(path) {
@@ -75,6 +77,7 @@ async function registerClient() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       client_name: DEVICE_NAME,
+      client_uri: "https://github.com/sonorame/hf-pipe",
       application_type: "native",
       token_endpoint_auth_method: "none",
       grant_types: [
@@ -116,6 +119,7 @@ async function deviceCodeLogin(clientId) {
   const url = data.verification_uri_complete || data.verification_uri;
   console.error("Open in browser and confirm the device:");
   console.error(url);
+  if (data.user_code) console.error("Device code:", data.user_code);
   if (url) openBrowser(url);
   const intervalMs = Math.max(2, data.interval || 5) * 1000;
   const deadline = Date.now() + (data.expires_in || 900) * 1000;
@@ -230,6 +234,7 @@ async function main() {
     client_id: tokens.client_id || client?.client_id,
     user_id: tokens.user_id,
     access_token: tokens.access_token,
+    expires_at: tokens.expires_in ? Date.now() + Number(tokens.expires_in) * 1000 : undefined,
     refresh_token: tokens.refresh_token,
     device_id: tokens.device_id,
   };
